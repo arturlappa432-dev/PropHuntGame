@@ -61,7 +61,7 @@ public class HiderPlayer : MonoBehaviour
     // Стикмен до вселения: рост охотника / stickmanRatio (капсула-примитив высотой 2 по Y).
     void ApplyStickmanShape()
     {
-        float h = StickmanHeight, r = Mathf.Max(0.1f, h * 0.17f);
+        float h = StickmanHeight, r = Mathf.Clamp(h * 0.17f, cc.skinWidth * 2f, h * 0.5f);
         cc.enabled = false;
         cc.radius = r; cc.height = h; cc.center = new Vector3(0, h * 0.5f + cc.skinWidth, 0);   // CC опирается низом капсулы на опору + skinWidth: поднимаем капсулу на skinWidth, чтобы корень (низ меша) стоял вплотную
         cc.stepOffset = Mathf.Min(0.3f, h * 0.5f);
@@ -269,7 +269,8 @@ public class HiderPlayer : MonoBehaviour
     void ApplyBodyShape(Prop prop)
     {
         cc.enabled = false;
-        float radius = Mathf.Clamp(prop.footRadius, 0.1f, 0.5f);
+        // Радиус не больше половины высоты и не меньше 2·skinWidth: капсула не выше видимой модели (без фиксированного минимума 0,1).
+        float radius = Mathf.Clamp(Mathf.Min(prop.footRadius, prop.height * 0.5f), cc.skinWidth * 2f, 0.5f);
         cc.radius = radius;
         cc.height = Mathf.Max(prop.height, radius * 2f);
         cc.center = new Vector3(0, cc.height * 0.5f + cc.skinWidth, 0);   // компенсация skinWidth, см. ApplyStickmanShape
