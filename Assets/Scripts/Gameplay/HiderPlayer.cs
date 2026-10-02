@@ -26,6 +26,8 @@ public class HiderPlayer : MonoBehaviour
     public Vector3 EyePosition => transform.position + Vector3.up * EyeHeight;
     float EyeHeight => CurrentProp == null ? 1.6f : Mathf.Max(0.25f, CurrentProp.height * 0.9f);
 
+    static int OwnBodyLayer => LayerMask.NameToLayer("OwnBody");
+
     CharacterController cc;
     float yaw, pitch, vy, camDist, toastUntil;
     bool thirdPerson, busy;
@@ -87,7 +89,7 @@ public class HiderPlayer : MonoBehaviour
         {
             if (h.collider.GetComponentInParent<HiderPlayer>() == this) continue;
             var p = h.collider.GetComponentInParent<Prop>();
-            if (p != null && p.IsFree && auth != null &&
+            if (p != null && (CurrentProp != null || p.IsFree) && auth != null &&
                 Vector3.Distance(EyePosition, h.point) <= auth.pickDistance) found = p;
             break;   // первое чужое попадание заслоняет всё, что за ним
         }
@@ -104,16 +106,51 @@ public class HiderPlayer : MonoBehaviour
     {
         if (busy) return;
         if (Target == null) { ShowToast("нет подходящего предмета"); return; }
-        if (!PossessionAuthority.Instance.TryRequest(this, Target, out var mode, out var reason))
+        var prop = Target;
+        if (CurrentProp != null)
+        {
+            // Смена облика: остаёмся на месте и копируем вид образца, образец не резервируем и не трогаем.
+            if (!PossessionAuthority.Instance.CheckMorph(this, prop, out var why)) { ShowToast(why); return; }
+            prop.SetHighlight(false, outlineMaterial);
+            Target = null;
+            Morph(prop);
+            return;
+        }
+        if (!PossessionAuthority.Instance.TryRequest(this, prop, out var mode, out var reason))
         {
             ShowToast(reason);
             return;
         }
-        var prop = Target;
         prop.SetHighlight(false, outlineMaterial);
         Target = null;
         if (mode == PossessMode.Suck) StartCoroutine(SuckRoutine(prop));
         else Complete(prop, PossessMode.Puff);
+    }
+
+    void Morph(Prop sample)
+    {
+        int oldMax = MaxHp, oldHp = Hp;
+        PropTier oldTier = CurrentProp.tier;
+        CurrentProp.CopyAppearanceFrom(sample);
+        ApplyBodyShape(CurrentProp);
+        MaxHp = CurrentProp.MaxHp;
+        Hp = HpConversion.Convert(oldHp, oldMax, MaxHp, oldTier, CurrentProp.tier);
+        NextRepossessTime = Time.time + PossessionAuthority.Instance.repossessCooldown;
+        float size = Mathf.Max(CurrentProp.height, CurrentProp.footRadius * 2f);
+        PuffEffect.Spawn(transform.position + Vector3.up * (CurrentProp.height * 0.5f), size, puffMaterial);
+        camDist = float.NaN;
+    }
+
+    void ApplyBodyShape(Prop prop)
+    {
+        cc.enabled = false;
+        float radius = Mathf.Clamp(prop.footRadius, 0.1f, 0.5f);
+        cc.radius = radius;
+        cc.height = Mathf.Max(prop.height, radius * 2f);
+        cc.center = new Vector3(0, cc.height * 0.5f, 0);
+        cc.stepOffset = Mathf.Min(0.3f, cc.height * 0.5f);   // иначе Unity ругается и отключает контроллер у мелких предметов
+        cc.enabled = true;
+        foreach (var c in prop.Colliders) Physics.IgnoreCollision(cc, c, true);
     }
 
     // Автопревращение опоздавшего: ближайший свободный предмет, мгновенно, «пуфф», камера без плавности.
@@ -143,37 +180,27 @@ public class HiderPlayer : MonoBehaviour
 
     static Vector3 FootPos(Prop p) => p.transform.position - Vector3.up * (p.height * 0.5f);
 
+    // Первое вселение (старт подготовки или автовселение): игрок переходит к зарезервированному экземпляру.
     void Complete(Prop prop, PossessMode mode)
     {
-        var old = CurrentProp;
         Vector3 foot = FootPos(prop);
-        int oldMax = MaxHp, oldHp = Hp;
-        if (old != null) old.ReleaseToHome();
-
         cc.enabled = false;
         transform.position = foot;
         prop.AttachTo(transform);
-        cc.stepOffset = 0.05f;
-        float radius = Mathf.Clamp(prop.footRadius, 0.1f, 0.5f);
-        cc.radius = radius;
-        cc.height = Mathf.Max(prop.height, radius * 2f);
-        cc.center = new Vector3(0, cc.height * 0.5f, 0);
-        cc.stepOffset = Mathf.Min(0.3f, cc.height * 0.5f);   // иначе Unity ругается и отключает контроллер у мелких предметов
-        cc.enabled = true;
-        foreach (var c in prop.Colliders) Physics.IgnoreCollision(cc, c, true);
+        prop.SetLayerRecursive(OwnBodyLayer);
+        ApplyBodyShape(prop);
         stickman.gameObject.SetActive(false);
         vy = 0f;
 
         MaxHp = prop.MaxHp;
-        Hp = old == null ? MaxHp : HpConversion.Convert(oldHp, oldMax, MaxHp, old.tier, prop.tier);
+        Hp = MaxHp;
         CurrentProp = prop;
-        NextRepossessTime = Time.time + PossessionAuthority.Instance.repossessCooldown;
+        NextRepossessTime = Time.time + PossessionAuthority.Instance.repossessCooldown;   // кулдаун первой смены на охоте отсчитывается отсюда
 
         if (mode == PossessMode.Puff)
         {
             float size = Mathf.Max(prop.height, prop.footRadius * 2f);
             PuffEffect.Spawn(prop.transform.position, size, puffMaterial);
-            if (old != null) PuffEffect.Spawn(foot + Vector3.up * 0.1f, size, puffMaterial);
             camDist = float.NaN;   // мгновенный переход камеры, без сглаживания
         }
     }
@@ -185,6 +212,9 @@ public class HiderPlayer : MonoBehaviour
         float want = thirdPerson ? 2f + (CurrentProp == null ? 1f : CurrentProp.height * 1.5f) : 0f;
         camDist = float.IsNaN(camDist) ? want : Mathf.Lerp(camDist, want, 1f - Mathf.Exp(-14f * Time.deltaTime));
         cam.transform.SetPositionAndRotation(eye - rot * Vector3.forward * camDist, rot);
+        // от первого лица собственное тело не рисуется, от третьего (V) рисуется
+        int own = OwnBodyLayer;
+        if (own >= 0) cam.cullingMask = thirdPerson ? ~0 : ~(1 << own);
     }
 
     void ShowToast(string s) { Toast = s; toastUntil = Time.time + 1.5f; }

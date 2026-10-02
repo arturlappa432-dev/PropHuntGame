@@ -12,19 +12,34 @@ public class PossessionAuthority : MonoBehaviour
 
     void Awake() { Instance = this; }
 
-    // Проверяет запрос и резервирует предмет за игроком (спор за предмет: достаётся первому).
+    // Первое вселение на старте: проверяет запрос и резервирует предмет за игроком (спор: достаётся первому).
+    // Смены облика во время охоты сюда не попадают, см. CheckMorph.
     public bool TryRequest(HiderPlayer who, Prop target, out PossessMode mode, out string reason)
     {
         bool prep = RoundState.Instance == null || RoundState.Instance.Phase == RoundPhase.Prep;
-        mode = (who.CurrentProp == null && prep) ? PossessMode.Suck : PossessMode.Puff;
+        mode = prep ? PossessMode.Suck : PossessMode.Puff;
         reason = null;
         if (target == null) { reason = "нет цели"; return false; }
         if (!target.IsFree) { reason = "предмет занят"; return false; }
-        if (Time.time < who.NextRepossessTime) { reason = $"смена через {who.NextRepossessTime - Time.time:0.0} с"; return false; }
-        Vector3 eye = who.EyePosition;
-        if (Vector3.Distance(eye, ClosestPoint(target, eye)) > pickDistance + 0.5f) { reason = "слишком далеко"; return false; }
+        if (!InRange(who, target)) { reason = "слишком далеко"; return false; }
         target.occupant = who;
         return true;
+    }
+
+    // Смена облика (копирование вида): ничего не резервирует, предмет-образец не трогается.
+    public bool CheckMorph(HiderPlayer who, Prop sample, out string reason)
+    {
+        reason = null;
+        if (sample == null) { reason = "нет цели"; return false; }
+        if (Time.time < who.NextRepossessTime) { reason = $"смена через {who.NextRepossessTime - Time.time:0.0} с"; return false; }
+        if (!InRange(who, sample)) { reason = "слишком далеко"; return false; }
+        return true;
+    }
+
+    bool InRange(HiderPlayer who, Prop target)
+    {
+        Vector3 eye = who.EyePosition;
+        return Vector3.Distance(eye, ClosestPoint(target, eye)) <= pickDistance + 0.5f;
     }
 
     // Автопревращение опоздавшего: ближайший свободный предмет, без проверки дистанции и кулдауна.

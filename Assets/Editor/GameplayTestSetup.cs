@@ -38,6 +38,7 @@ public static class GameplayTestSetup
 
     public static void Create(Vector3 playerPos)
     {
+        EnsureLayer("OwnBody");
         Directory.CreateDirectory(PropMatDir);
         var mats = new Material[Colors.Length];
         for (int i = 0; i < mats.Length; i++) mats[i] = Mat($"{PropMatDir}/Prop_{i}.mat", Colors[i]);
@@ -139,11 +140,45 @@ public static class GameplayTestSetup
         go.transform.position = surfacePos + Vector3.up * (h * 0.5f);
         go.transform.rotation = Quaternion.Euler(0, (float)rng.NextDouble() * 360f, 0);
         go.GetComponent<Renderer>().sharedMaterial = mats[def.color];
+        Ground(go, surfacePos);
         var prop = go.AddComponent<Prop>();
         prop.tier = def.tier;
         var b = go.GetComponent<Renderer>().bounds;
         prop.height = b.size.y;
         prop.footRadius = Mathf.Max(b.extents.x, b.extents.z);
+    }
+
+    // Опирает предмет на поверхность под ним: луч вниз по коллайдерам карты, нижняя грань коллайдера ложится на точку попадания.
+    static void Ground(GameObject go, Vector3 surfacePos)
+    {
+        var col = go.GetComponent<Collider>();
+        Physics.SyncTransforms();
+        var origin = new Vector3(surfacePos.x, surfacePos.y + 0.05f, surfacePos.z);
+        var hits = Physics.RaycastAll(origin, Vector3.down, 0.3f, ~0, QueryTriggerInteraction.Ignore);
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        foreach (var h in hits)
+        {
+            if (h.collider.transform.IsChildOf(go.transform) || h.collider.GetComponentInParent<Prop>() != null) continue;
+            float dy = h.point.y - col.bounds.min.y;
+            go.transform.position += Vector3.up * dy;
+            Physics.SyncTransforms();
+            return;
+        }
+        Debug.LogWarning($"Grounding: под точкой {surfacePos} нет поверхности, предмет {go.name} оставлен как есть");
+    }
+
+    // Слой для собственного тела игрока (исключается из камеры от первого лица), см. HiderPlayer.
+    static void EnsureLayer(string layerName)
+    {
+        if (LayerMask.NameToLayer(layerName) >= 0) return;
+        var tm = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
+        var layers = tm.FindProperty("layers");
+        for (int i = 8; i < layers.arraySize; i++)
+        {
+            var el = layers.GetArrayElementAtIndex(i);
+            if (string.IsNullOrEmpty(el.stringValue)) { el.stringValue = layerName; tm.ApplyModifiedProperties(); return; }
+        }
+        Debug.LogError("Нет свободного слоя для " + layerName);
     }
 
     static SpawnPoint MakePoint(Transform parent, string name, Vector3 pos, PropTier maxTier)

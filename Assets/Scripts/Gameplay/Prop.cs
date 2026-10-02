@@ -65,6 +65,57 @@ public class Prop : MonoBehaviour
         transform.localRotation = Quaternion.identity;
     }
 
+    // Слой для собственного тела игрока: камера от первого лица его не рисует.
+    public void SetLayerRecursive(int layer)
+    {
+        if (layer < 0) return;
+        foreach (var t in GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
+    }
+
+    // Смена облика во время охоты: тело игрока копирует модель, тир и коллайдер образца. Образец не меняется.
+    public void CopyAppearanceFrom(Prop src)
+    {
+        tier = src.tier;
+        height = src.height;
+        footRadius = src.footRadius;
+
+        var srcFilter = src.GetComponentInChildren<MeshFilter>();
+        var myFilter = GetComponentInChildren<MeshFilter>();
+        if (srcFilter != null && myFilter != null) myFilter.sharedMesh = srcFilter.sharedMesh;
+        plainMats = src.plainMats;   // подсветка на образце в этот момент уже снята
+        rend.sharedMaterials = plainMats;
+        lit = false;
+        transform.localScale = src.transform.localScale;
+
+        foreach (var c in Colliders) if (c != null) Destroy(c);
+        Colliders = CopyColliders(src, gameObject);
+        transform.localPosition = new Vector3(0f, height * 0.5f, 0f);
+        transform.localRotation = Quaternion.identity;
+    }
+
+    static Collider[] CopyColliders(Prop src, GameObject dst)
+    {
+        var list = new List<Collider>();
+        foreach (var c in src.Colliders)
+        {
+            Collider n = null;
+            switch (c)
+            {
+                case BoxCollider b:
+                    var nb = dst.AddComponent<BoxCollider>(); nb.center = b.center; nb.size = b.size; n = nb; break;
+                case CapsuleCollider cap:
+                    var nc = dst.AddComponent<CapsuleCollider>();
+                    nc.center = cap.center; nc.radius = cap.radius; nc.height = cap.height; nc.direction = cap.direction; n = nc; break;
+                case SphereCollider s:
+                    var ns = dst.AddComponent<SphereCollider>(); ns.center = s.center; ns.radius = s.radius; n = ns; break;
+                case MeshCollider m:
+                    var nm = dst.AddComponent<MeshCollider>(); nm.sharedMesh = m.sharedMesh; nm.convex = m.convex; n = nm; break;
+            }
+            if (n != null) list.Add(n);
+        }
+        return list.ToArray();
+    }
+
     // Освобождённый предмет возвращается на своё место и в пул свободных.
     public void ReleaseToHome()
     {
