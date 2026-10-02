@@ -98,10 +98,8 @@ public static class SupermarketMapBuilder
 
         // Точки старта и камера для скриншота
         var spawn = new GameObject("PlayerStart"); spawn.transform.position = new Vector3(0, 0.1f, -5.5f);
-        var camGo = new GameObject("Main Camera"); camGo.tag = "MainCamera";
-        camGo.AddComponent<Camera>(); camGo.AddComponent<AudioListener>();
-        camGo.transform.position = new Vector3(0, 12f, -15f);
-        camGo.transform.rotation = Quaternion.Euler(45, 0, 0);
+        // Предметы-заглушки, игрок с камерой и менеджер раунда (вне корня Supermarket, в навмеш не попадают)
+        GameplayTestSetup.Create(spawn.transform.position);
 
         // NavMesh: поверхность собирает только геометрию Supermarket
         var surf = root.gameObject.AddComponent<NavMeshSurface>();
