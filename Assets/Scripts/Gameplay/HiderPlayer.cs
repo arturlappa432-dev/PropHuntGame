@@ -63,7 +63,7 @@ public class HiderPlayer : MonoBehaviour
     {
         float h = StickmanHeight, r = Mathf.Max(0.1f, h * 0.17f);
         cc.enabled = false;
-        cc.radius = r; cc.height = h; cc.center = new Vector3(0, h * 0.5f, 0);
+        cc.radius = r; cc.height = h; cc.center = new Vector3(0, h * 0.5f + cc.skinWidth, 0);   // CC опирается низом капсулы на опору + skinWidth: поднимаем капсулу на skinWidth, чтобы корень (низ меша) стоял вплотную
         cc.stepOffset = Mathf.Min(0.3f, h * 0.5f);
         cc.enabled = true;
         stickBaseScale = new Vector3(r * 2f, h * 0.5f, r * 2f);
@@ -272,7 +272,7 @@ public class HiderPlayer : MonoBehaviour
         float radius = Mathf.Clamp(prop.footRadius, 0.1f, 0.5f);
         cc.radius = radius;
         cc.height = Mathf.Max(prop.height, radius * 2f);
-        cc.center = new Vector3(0, cc.height * 0.5f, 0);
+        cc.center = new Vector3(0, cc.height * 0.5f + cc.skinWidth, 0);   // компенсация skinWidth, см. ApplyStickmanShape
         cc.stepOffset = Mathf.Min(0.3f, cc.height * 0.5f);   // иначе Unity ругается и отключает контроллер у мелких предметов
         cc.enabled = true;
         foreach (var c in prop.Colliders) Physics.IgnoreCollision(cc, c, true);
