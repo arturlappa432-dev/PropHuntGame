@@ -15,6 +15,7 @@ public class HiderPlayer : MonoBehaviour
     public float gravity = -20f;
     public float suckDuration = 0.35f;
     public float mouseSensitivity = 0.1f;
+    public float propTurnSpeed = 100f;   // °/с, предложено 90-120, калибровать
 
     public Prop CurrentProp { get; private set; }
     public Prop Target { get; private set; }
@@ -29,7 +30,7 @@ public class HiderPlayer : MonoBehaviour
     static int OwnBodyLayer => LayerMask.NameToLayer("OwnBody");
 
     CharacterController cc;
-    float yaw, pitch, vy, camDist, toastUntil;
+    float yaw, pitch, vy, camDist, toastUntil, propYaw;
     bool thirdPerson, busy;
 
     void Awake() { cc = GetComponent<CharacterController>(); }
@@ -58,12 +59,29 @@ public class HiderPlayer : MonoBehaviour
             Move(kb);
             UpdateTarget();
             if (kb != null && kb.eKey.wasPressedThisFrame) PressPossess();
+            RotateProp(kb);
         }
+    }
+
+    // Q влево, E вправо (E только без подсвеченной цели: у превращения приоритет). Только yaw, отдельно от камеры.
+    void RotateProp(Keyboard kb)
+    {
+        if (CurrentProp == null) return;
+        float dir = 0f;
+        if (kb != null)
+        {
+            if (kb.qKey.isPressed) dir -= 1f;
+            if (kb.eKey.isPressed && Target == null) dir += 1f;
+        }
+        propYaw += dir * propTurnSpeed * Time.deltaTime;
+        CurrentProp.transform.localRotation = Quaternion.Euler(0f, propYaw, 0f);
     }
 
     void Move(Keyboard kb)
     {
-        transform.rotation = Quaternion.Euler(0, yaw, 0);
+        // Тело-предмет не крутится за камерой: у него своя ориентация (propYaw), поворачивается только стикмен.
+        Quaternion look = Quaternion.Euler(0, yaw, 0);
+        if (CurrentProp == null) transform.rotation = look;
         Vector3 input = Vector3.zero;
         if (kb != null)
         {
@@ -72,7 +90,7 @@ public class HiderPlayer : MonoBehaviour
             if (kb.dKey.isPressed) input.x += 1;
             if (kb.aKey.isPressed) input.x -= 1;
         }
-        Vector3 move = transform.TransformDirection(input.normalized) * walkSpeed;
+        Vector3 move = look * input.normalized * walkSpeed;
         vy = cc.isGrounded ? -1f : vy + gravity * Time.deltaTime;
         move.y = vy;
         cc.Move(move * Time.deltaTime);
@@ -186,6 +204,8 @@ public class HiderPlayer : MonoBehaviour
         Vector3 foot = FootPos(prop);
         cc.enabled = false;
         transform.position = foot;
+        transform.rotation = Quaternion.identity;
+        propYaw = 0f;
         prop.AttachTo(transform);
         prop.SetLayerRecursive(OwnBodyLayer);
         ApplyBodyShape(prop);
