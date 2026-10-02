@@ -16,6 +16,10 @@ public class HiderPlayer : MonoBehaviour
     public float suckDuration = 0.35f;
     public float mouseSensitivity = 0.1f;
     public float propTurnSpeed = 100f;   // °/с, предложено 90-120, калибровать
+    public float hunterHeight = 1.8f;           // рост охотника (его ещё нет), от него считается рост стикмена
+    public float stickmanRatio = 3.5f;          // стикмен в 3-4 раза меньше охотника (possession.md / movement-and-camera.md)
+    public float jumpHeightMultiplier = 1.75f;  // высота прыжка = множитель × собственная высота модели, предложено 1,5-2
+    public float jumpWindup = 0.1f;             // приседание перед отрывом, сек
 
     public Prop CurrentProp { get; private set; }
     public Prop Target { get; private set; }
@@ -25,13 +29,21 @@ public class HiderPlayer : MonoBehaviour
     public string Toast { get; private set; } = "";
 
     public Vector3 EyePosition => transform.position + Vector3.up * EyeHeight;
-    float EyeHeight => CurrentProp == null ? 1.6f : Mathf.Max(0.25f, CurrentProp.height * 0.9f);
+    float EyeHeight => CurrentProp == null ? StickmanHeight * 0.9f : Mathf.Max(0.25f, CurrentProp.height * 0.9f);
+    public float StickmanHeight => hunterHeight / stickmanRatio;
+    public float BodyHeight => CurrentProp == null ? StickmanHeight : CurrentProp.height;
+    public float JumpHeight => BodyHeight * jumpHeightMultiplier;
 
     static int OwnBodyLayer => LayerMask.NameToLayer("OwnBody");
 
     CharacterController cc;
     float yaw, pitch, vy, camDist, toastUntil, propYaw;
-    bool thirdPerson, busy;
+    bool thirdPerson, busy, eConsumed;
+    float windup = -1f, squash = 1f, camKick, camKickVel;
+    bool wasAirborne;
+    Vector3 propBaseScale = Vector3.one, stickBaseScale = Vector3.one;
+    AudioSource sfx;
+    AudioClip landClip;
 
     void Awake() { cc = GetComponent<CharacterController>(); }
 
@@ -39,6 +51,23 @@ public class HiderPlayer : MonoBehaviour
     {
         Cursor.lockState = CursorLockMode.Locked;
         yaw = transform.eulerAngles.y;
+        ApplyStickmanShape();
+        landClip = MakeLandClip();
+        sfx = gameObject.AddComponent<AudioSource>();
+        sfx.spatialBlend = 0f;
+    }
+
+    // Стикмен до вселения: рост охотника / stickmanRatio (капсула-примитив высотой 2 по Y).
+    void ApplyStickmanShape()
+    {
+        float h = StickmanHeight, r = Mathf.Max(0.1f, h * 0.17f);
+        cc.enabled = false;
+        cc.radius = r; cc.height = h; cc.center = new Vector3(0, h * 0.5f, 0);
+        cc.stepOffset = Mathf.Min(0.3f, h * 0.5f);
+        cc.enabled = true;
+        stickBaseScale = new Vector3(r * 2f, h * 0.5f, r * 2f);
+        stickman.localScale = stickBaseScale;
+        stickman.localPosition = new Vector3(0, h * 0.5f, 0);
     }
 
     void Update()
@@ -58,10 +87,16 @@ public class HiderPlayer : MonoBehaviour
         {
             Move(kb);
             UpdateTarget();
-            if (kb != null && kb.eKey.wasPressedThisFrame) PressPossess();
+            if (kb != null && kb.eKey.wasPressedThisFrame && MorphReady) { PressPossess(); eConsumed = true; }
+            else if (kb != null && kb.eKey.wasPressedThisFrame && CurrentProp == null) PressPossess();
+            if (kb != null && !kb.eKey.isPressed) eConsumed = false;
             RotateProp(kb);
         }
+        UpdateSquash();
     }
+
+    // E превращает только когда есть подсвеченная цель и кулдаун истёк; иначе E поворачивает предмет вправо.
+    bool MorphReady => CurrentProp != null && Target != null && Time.time >= NextRepossessTime;
 
     // Q влево, E вправо (E только без подсвеченной цели: у превращения приоритет). Только yaw, отдельно от камеры.
     void RotateProp(Keyboard kb)
@@ -71,7 +106,7 @@ public class HiderPlayer : MonoBehaviour
         if (kb != null)
         {
             if (kb.qKey.isPressed) dir -= 1f;
-            if (kb.eKey.isPressed && Target == null) dir += 1f;
+            if (kb.eKey.isPressed && !eConsumed && !MorphReady) dir += 1f;
         }
         propYaw += dir * propTurnSpeed * Time.deltaTime;
         CurrentProp.transform.localRotation = Quaternion.Euler(0f, propYaw, 0f);
@@ -91,9 +126,79 @@ public class HiderPlayer : MonoBehaviour
             if (kb.aKey.isPressed) input.x -= 1;
         }
         Vector3 move = look * input.normalized * walkSpeed;
-        vy = cc.isGrounded ? -1f : vy + gravity * Time.deltaTime;
+        bool grounded = cc.isGrounded;
+        if (grounded && wasAirborne) Land(-vy);
+        if (grounded && windup < 0f && kb != null && kb.spaceKey.wasPressedThisFrame) windup = jumpWindup;
+        if (windup >= 0f)
+        {
+            windup -= Time.deltaTime;
+            if (windup < 0f)
+            {
+                if (grounded) vy = Mathf.Sqrt(2f * -gravity * JumpHeight);   // отрыв без звука
+                windup = -1f;
+                grounded = false;
+            }
+            else windup = Mathf.Max(windup, 0f);
+        }
+        if (grounded) vy = -1f; else vy += gravity * Time.deltaTime;
         move.y = vy;
         cc.Move(move * Time.deltaTime);
+        wasAirborne = !cc.isGrounded;
+    }
+
+    // Приземление: звук (громче от скорости падения), приседание и лёгкий толчок камеры.
+    void Land(float fallSpeed)
+    {
+        float k = Mathf.Clamp01(fallSpeed / 8f);
+        if (k < 0.05f) return;
+        if (sfx != null && landClip != null) sfx.PlayOneShot(landClip, 0.25f + 0.75f * k);
+        squash = 1f - 0.18f * k;
+        camKickVel = -2.2f * k;
+    }
+
+    // Визуальный squash-and-stretch по высоте тела: приседание перед отрывом, растяжение в воздухе, возврат плавно.
+    void UpdateSquash()
+    {
+        float target = 1f;
+        if (windup >= 0f) target = 0.8f;
+        else if (!cc.isGrounded && !busy)
+        {
+            float v0 = Mathf.Sqrt(2f * -gravity * Mathf.Max(0.05f, JumpHeight));
+            target = 1f + 0.15f * Mathf.Clamp01(Mathf.Abs(vy) / v0);
+        }
+        squash = Mathf.Lerp(squash, target, 1f - Mathf.Exp(-(windup >= 0f ? 30f : 18f) * Time.deltaTime));
+        if (busy) return;
+        float sy = squash, sxz = 1f / Mathf.Sqrt(sy);   // сохраняем объём
+        if (CurrentProp == null)
+        {
+            stickman.localScale = new Vector3(stickBaseScale.x * sxz, stickBaseScale.y * sy, stickBaseScale.z * sxz);
+            stickman.localPosition = new Vector3(0, StickmanHeight * 0.5f * sy, 0);
+        }
+        else
+        {
+            var t = CurrentProp.transform;
+            t.localScale = new Vector3(propBaseScale.x * sxz, propBaseScale.y * sy, propBaseScale.z * sxz);
+            t.localPosition = new Vector3(0, CurrentProp.height * 0.5f * sy, 0);
+        }
+    }
+
+    // Процедурный глухой «тум» приземления, без внешних ассетов.
+    static AudioClip MakeLandClip()
+    {
+        const int rate = 22050;
+        int n = (int)(rate * 0.18f);
+        var data = new float[n];
+        var rng = new System.Random(7);
+        for (int i = 0; i < n; i++)
+        {
+            float t = i / (float)rate, env = Mathf.Exp(-t * 28f);
+            float tone = Mathf.Sin(2f * Mathf.PI * (90f - 200f * t) * t);
+            float noise = (float)(rng.NextDouble() * 2 - 1) * Mathf.Exp(-t * 60f) * 0.5f;
+            data[i] = (tone * 0.8f + noise) * env;
+        }
+        var clip = AudioClip.Create("land", n, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     // Прицел по центру экрана: первое непустое попадание луча; подходящий свободный предмет в пределах дистанции подсвечивается.
@@ -123,7 +228,7 @@ public class HiderPlayer : MonoBehaviour
     public void PressPossess()
     {
         if (busy) return;
-        if (Target == null) { ShowToast("нет подходящего предмета"); return; }
+        if (Target == null) return;   // обратной связи об отсутствии цели нет: её даёт сама подсветка
         var prop = Target;
         if (CurrentProp != null)
         {
@@ -150,6 +255,7 @@ public class HiderPlayer : MonoBehaviour
         int oldMax = MaxHp, oldHp = Hp;
         PropTier oldTier = CurrentProp.tier;
         CurrentProp.CopyAppearanceFrom(sample);
+        propBaseScale = CurrentProp.transform.localScale;
         ApplyBodyShape(CurrentProp);
         MaxHp = CurrentProp.MaxHp;
         Hp = HpConversion.Convert(oldHp, oldMax, MaxHp, oldTier, CurrentProp.tier);
@@ -183,7 +289,7 @@ public class HiderPlayer : MonoBehaviour
         busy = true;
         cc.enabled = false;
         Vector3 from = transform.position, to = FootPos(prop);
-        Vector3 scale = stickman.localScale;
+        Vector3 scale = stickBaseScale;
         for (float t = 0; t < suckDuration; t += Time.deltaTime)
         {
             float k = t / suckDuration;
@@ -207,6 +313,7 @@ public class HiderPlayer : MonoBehaviour
         transform.rotation = Quaternion.identity;
         propYaw = 0f;
         prop.AttachTo(transform);
+        propBaseScale = prop.transform.localScale;
         prop.SetLayerRecursive(OwnBodyLayer);
         ApplyBodyShape(prop);
         stickman.gameObject.SetActive(false);
@@ -229,9 +336,12 @@ public class HiderPlayer : MonoBehaviour
     {
         Vector3 eye = EyePosition;
         Quaternion rot = Quaternion.Euler(pitch, yaw, 0);
-        float want = thirdPerson ? 2f + (CurrentProp == null ? 1f : CurrentProp.height * 1.5f) : 0f;
+        float want = thirdPerson ? 1f + (CurrentProp == null ? StickmanHeight : CurrentProp.height * 1.5f) : 0f;
         camDist = float.IsNaN(camDist) ? want : Mathf.Lerp(camDist, want, 1f - Mathf.Exp(-14f * Time.deltaTime));
-        cam.transform.SetPositionAndRotation(eye - rot * Vector3.forward * camDist, rot);
+        // пружинный толчок камеры при приземлении
+        camKickVel += (-camKick * 180f - camKickVel * 18f) * Time.deltaTime;
+        camKick += camKickVel * Time.deltaTime;
+        cam.transform.SetPositionAndRotation(eye - rot * Vector3.forward * camDist + Vector3.up * camKick * BodyHeight, rot);
         // от первого лица собственное тело не рисуется, от третьего (V) рисуется
         int own = OwnBodyLayer;
         if (own >= 0) cam.cullingMask = thirdPerson ? ~0 : ~(1 << own);
