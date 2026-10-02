@@ -19,6 +19,7 @@ public class HiderPlayer : MonoBehaviour
     public float hunterHeight = 1.8f;           // рост охотника (его ещё нет), от него считается рост стикмена
     public float stickmanRatio = 3.5f;          // стикмен в 3-4 раза меньше охотника (possession.md / movement-and-camera.md)
     public float jumpHeightMultiplier = 1.75f;  // высота прыжка = множитель × собственная высота модели, предложено 1,5-2
+    public float minHidingJumpHeight = 2.05f;   // абсолютный минимум высоты прыжка: верхняя полка 1,82 м (измерено в сцене) + ~12%
     public float jumpWindup = 0.1f;             // приседание перед отрывом, сек
 
     public Prop CurrentProp { get; private set; }
@@ -32,7 +33,7 @@ public class HiderPlayer : MonoBehaviour
     float EyeHeight => CurrentProp == null ? StickmanHeight * 0.9f : Mathf.Max(0.25f, CurrentProp.height * 0.9f);
     public float StickmanHeight => hunterHeight / stickmanRatio;
     public float BodyHeight => CurrentProp == null ? StickmanHeight : CurrentProp.height;
-    public float JumpHeight => BodyHeight * jumpHeightMultiplier;
+    public float JumpHeight => Mathf.Max(BodyHeight * jumpHeightMultiplier, minHidingJumpHeight);
 
     static int OwnBodyLayer => LayerMask.NameToLayer("OwnBody");
 
