@@ -46,7 +46,7 @@ public class HiderPlayer : MonoBehaviour
     AudioSource sfx;
     AudioClip landClip;
 
-    void Awake() { cc = GetComponent<CharacterController>(); }
+    void Awake() { cc = GetComponent<CharacterController>(); cc.skinWidth = 0.01f; }   // дефолт 0.08 даёт видимый зазор
 
     void Start()
     {

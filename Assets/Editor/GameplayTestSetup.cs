@@ -97,7 +97,8 @@ public static class GameplayTestSetup
         var player = new GameObject("Player");
         player.transform.position = playerPos;
         var cc = player.AddComponent<CharacterController>();
-        cc.height = 1.8f; cc.radius = 0.3f; cc.center = new Vector3(0, 0.9f, 0);
+        cc.height = 1.8f; cc.radius = 0.25f; cc.center = new Vector3(0, 0.9f, 0);
+        cc.skinWidth = 0.01f;   // дефолт 0.08 даёт видимый зазор до поверхностей
         var stick = GameObject.CreatePrimitive(PrimitiveType.Capsule);
         stick.name = "Stickman";
         Object.DestroyImmediate(stick.GetComponent<Collider>());
@@ -140,18 +141,32 @@ public static class GameplayTestSetup
         go.transform.position = surfacePos + Vector3.up * (h * 0.5f);
         go.transform.rotation = Quaternion.Euler(0, (float)rng.NextDouble() * 360f, 0);
         go.GetComponent<Renderer>().sharedMaterial = mats[def.color];
+        FitCollider(go);
         Ground(go, surfacePos);
         var prop = go.AddComponent<Prop>();
         prop.tier = def.tier;
-        var b = go.GetComponent<Renderer>().bounds;
-        prop.height = b.size.y;
-        prop.footRadius = Mathf.Max(b.extents.x, b.extents.z);
+        // габариты по локальным границам меша (без раздувания AABB от поворота)
+        var lb = go.GetComponent<MeshFilter>().sharedMesh.bounds;
+        var ls = go.transform.localScale;
+        prop.height = lb.size.y * ls.y;
+        prop.footRadius = Mathf.Max(lb.extents.x * ls.x, lb.extents.z * ls.z);
+    }
+
+    // Коллайдер строго по мешу: у куба примитивный BoxCollider уже точный, у цилиндра/капсулы
+    // примитивный CapsuleCollider скруглён и оставляет зазор у граней, поэтому ставим выпуклый MeshCollider по самому мешу.
+    static void FitCollider(GameObject go)
+    {
+        var old = go.GetComponent<Collider>();
+        if (old is BoxCollider || go.GetComponent<MeshFilter>().sharedMesh.name == "Capsule") return;   // капсула: меш тоже скруглённый, примитивный коллайдер совпадает
+        Object.DestroyImmediate(old);
+        var mc = go.AddComponent<MeshCollider>();
+        mc.sharedMesh = go.GetComponent<MeshFilter>().sharedMesh;
+        mc.convex = true;
     }
 
     // Опирает предмет на поверхность под ним: луч вниз по коллайдерам карты, нижняя грань коллайдера ложится на точку попадания.
     static void Ground(GameObject go, Vector3 surfacePos)
     {
-        var col = go.GetComponent<Collider>();
         Physics.SyncTransforms();
         var origin = new Vector3(surfacePos.x, surfacePos.y + 0.05f, surfacePos.z);
         var hits = Physics.RaycastAll(origin, Vector3.down, 0.3f, ~0, QueryTriggerInteraction.Ignore);
@@ -159,7 +174,7 @@ public static class GameplayTestSetup
         foreach (var h in hits)
         {
             if (h.collider.transform.IsChildOf(go.transform) || h.collider.GetComponentInParent<Prop>() != null) continue;
-            float dy = h.point.y - col.bounds.min.y;
+            float dy = h.point.y - go.GetComponent<Renderer>().bounds.min.y;   // по фактическому мешу, не по коллайдеру
             go.transform.position += Vector3.up * dy;
             Physics.SyncTransforms();
             return;
