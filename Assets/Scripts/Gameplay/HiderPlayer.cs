@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -7,7 +8,10 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(CharacterController))]
 public class HiderPlayer : MonoBehaviour
 {
+    public static readonly List<HiderPlayer> All = new List<HiderPlayer>();
+
     public Camera cam;
+    public bool controlled = true;     // false: прячущийся без локального ввода (манекен для теста боя)
     public Transform stickman;
     public Material outlineMaterial;
     public Material puffMaterial;
@@ -22,6 +26,10 @@ public class HiderPlayer : MonoBehaviour
     public float minHidingJumpHeight = 2.05f;   // абсолютный минимум высоты прыжка: верхняя полка 1,82 м (измерено в сцене) + ~12%
     public float jumpWindup = 0.1f;             // приседание перед отрывом, сек
 
+    public bool Caught { get; private set; }
+    public bool IsAlive => !Caught;
+    public Vector3 BodyCenter => transform.position + Vector3.up * BodyHeight * 0.5f;
+    public bool Boosted => Time.time < boostUntil;
     public Prop CurrentProp { get; private set; }
     public Prop Target { get; private set; }
     public int Hp { get; private set; }
@@ -42,15 +50,20 @@ public class HiderPlayer : MonoBehaviour
     bool thirdPerson, busy, eConsumed;
     float windup = -1f, squash = 1f, camKick, camKickVel;
     bool wasAirborne;
+    float boostUntil, boostMult = 1f, hitFlashUntil;
     Vector3 propBaseScale = Vector3.one, stickBaseScale = Vector3.one;
     AudioSource sfx;
     AudioClip landClip;
+
+    void OnEnable() { All.Add(this); }
+    void OnDisable() { All.Remove(this); }
 
     void Awake() { cc = GetComponent<CharacterController>(); cc.skinWidth = 0.01f; }   // дефолт 0.08 даёт видимый зазор
 
     void Start()
     {
-        Cursor.lockState = CursorLockMode.Locked;
+        if (controlled) Cursor.lockState = CursorLockMode.Locked;
+        if (cam != null) cam.transform.SetParent(null, true);   // камера общая: её пересаживают на охотника и обратно
         yaw = transform.eulerAngles.y;
         ApplyStickmanShape();
         landClip = MakeLandClip();
@@ -73,9 +86,10 @@ public class HiderPlayer : MonoBehaviour
 
     void Update()
     {
+        if (Caught) return;
         if (Toast.Length > 0 && Time.time > toastUntil) Toast = "";
-        var kb = Keyboard.current;
-        var mouse = Mouse.current;
+        var kb = controlled ? Keyboard.current : null;
+        var mouse = controlled ? Mouse.current : null;
         if (mouse != null && Cursor.lockState == CursorLockMode.Locked)
         {
             Vector2 d = mouse.delta.ReadValue() * mouseSensitivity;
@@ -87,7 +101,7 @@ public class HiderPlayer : MonoBehaviour
         if (!busy)
         {
             Move(kb);
-            UpdateTarget();
+            if (controlled) UpdateTarget();
             if (kb != null && kb.eKey.wasPressedThisFrame && MorphReady) { PressPossess(); eConsumed = true; }
             else if (kb != null && kb.eKey.wasPressedThisFrame && CurrentProp == null) PressPossess();
             if (kb != null && !kb.eKey.isPressed) eConsumed = false;
@@ -126,7 +140,7 @@ public class HiderPlayer : MonoBehaviour
             if (kb.dKey.isPressed) input.x += 1;
             if (kb.aKey.isPressed) input.x -= 1;
         }
-        Vector3 move = look * input.normalized * walkSpeed;
+        Vector3 move = look * input.normalized * walkSpeed * (Boosted ? boostMult : 1f);
         bool grounded = cc.isGrounded;
         if (grounded && wasAirborne) Land(-vy);
         if (grounded && windup < 0f && kb != null && kb.spaceKey.wasPressedThisFrame) windup = jumpWindup;
@@ -336,6 +350,7 @@ public class HiderPlayer : MonoBehaviour
 
     void LateUpdate()
     {
+        if (!controlled || cam == null || Caught) return;
         Vector3 eye = EyePosition;
         Quaternion rot = Quaternion.Euler(pitch, yaw, 0);
         float want = thirdPerson ? 1f + (CurrentProp == null ? StickmanHeight : CurrentProp.height * 1.5f) : 0f;
@@ -349,16 +364,92 @@ public class HiderPlayer : MonoBehaviour
         if (own >= 0) cam.cullingMask = thirdPerson ? ~0 : ~(1 << own);
     }
 
+    public void SetControlled(bool on)
+    {
+        controlled = on;
+        if (!on && Target != null) { Target.SetHighlight(false, outlineMaterial); Target = null; }
+        if (on) Cursor.lockState = CursorLockMode.Locked;
+    }
+
+    // --- Бой (вызывает CombatAuthority; на хосте при переходе на сеть) ---
+
+    // Урон от выстрела; true, если HP дошло до 0.
+    public bool ApplyHit(int damage)
+    {
+        if (Caught) return false;
+        Hp = Mathf.Max(0, Hp - damage);
+        hitFlashUntil = Time.time + 0.25f;
+        CombatAudio.PlayAt(CombatAudio.Hit, BodyCenter, 1f);
+        return Hp <= 0;
+    }
+
+    // near-miss: свист слышит только этот прячущийся (2D-звук), и он же получает буст скорости.
+    public void OnNearMiss(float hunterDistance, float boostSeconds, float boostMultiplier)
+    {
+        if (Caught) return;
+        boostUntil = Time.time + boostSeconds;
+        boostMult = boostMultiplier;
+        if (controlled && sfx != null) sfx.PlayOneShot(CombatAudio.Whistle, CombatAudio.WhistleVolume(hunterDistance));
+    }
+
+    // Поимка: предмет исчезает с «пуфф» -> камера пролетает к поймавшему -> возрождение в команде охотников.
+    public void BeginCatch(HunterPlayer by)
+    {
+        if (Caught) return;
+        Caught = true;
+        StartCoroutine(CaughtRoutine(by));
+    }
+
+    IEnumerator CaughtRoutine(HunterPlayer by)
+    {
+        busy = true;
+        if (Target != null) { Target.SetHighlight(false, outlineMaterial); Target = null; }
+        Vector3 center = BodyCenter;
+        float size = Mathf.Max(BodyHeight, CurrentProp != null ? CurrentProp.footRadius * 2f : 0.2f);
+        PuffEffect.Spawn(center, size, puffMaterial);
+        CombatAudio.PlayAt(CombatAudio.Puff, center, 1f);
+        if (CurrentProp != null) CurrentProp.gameObject.SetActive(false);   // исчезает мгновенно, без физики разрушения
+        stickman.gameObject.SetActive(false);
+        cc.enabled = false;
+
+        if (controlled && cam != null)
+        {
+            cam.cullingMask = ~0;
+            cam.transform.SetParent(null, true);
+            Vector3 p0 = cam.transform.position; Quaternion r0 = cam.transform.rotation;
+            const float fly = 1.0f, hold = 0.4f;
+            for (float t = 0; t < fly + hold && by != null; t += Time.deltaTime)
+            {
+                float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / fly));
+                Vector3 head = by.EyePosition;
+                Vector3 p1 = head + by.transform.forward * 2.2f + Vector3.up * 0.1f;
+                cam.transform.SetPositionAndRotation(Vector3.Lerp(p0, p1, k),
+                    Quaternion.Slerp(r0, Quaternion.LookRotation(head - p1), k));
+                yield return null;
+            }
+        }
+        else yield return new WaitForSeconds(1.4f);
+
+        if (CombatAuthority.Instance != null) CombatAuthority.Instance.SpawnHunter(controlled, cam);
+        Destroy(gameObject);
+    }
+
     void ShowToast(string s) { Toast = s; toastUntil = Time.time + 1.5f; }
 
     void OnGUI()
     {
+        if (!controlled || Caught) return;
+        if (Time.time < hitFlashUntil)
+        {
+            GUI.color = new Color(1f, 0.1f, 0.1f, 0.35f * (hitFlashUntil - Time.time) / 0.25f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+        }
         var style = new GUIStyle(GUI.skin.label) { fontSize = 16, normal = { textColor = Color.white } };
         var round = RoundState.Instance;
         string phase = round == null ? "" : round.Phase == RoundPhase.Prep ? $"Подготовка: {round.PrepRemaining:0} с" : "Охота";
         float cd = Mathf.Max(0, NextRepossessTime - Time.time);
         string cdText = CurrentProp == null ? "" : cd > 0 ? $"   Смена облика: {cd:0.0} с" : "   Смена облика: готово";
-        GUI.Label(new Rect(12, 8, 700, 28), $"{phase}   HP: {Hp}/{MaxHp}{cdText}", style);
+        GUI.Label(new Rect(12, 8, 900, 28), $"{phase}   HP: {Hp}/{MaxHp}{cdText}{(Boosted ? "   БУСТ" : "")}", style);
         if (Target != null) GUI.Label(new Rect(Screen.width / 2f - 60, Screen.height / 2f + 16, 200, 26), "[E] вселиться", style);
         if (Toast.Length > 0) GUI.Label(new Rect(Screen.width / 2f - 100, Screen.height / 2f + 44, 400, 26), Toast, style);
         GUI.color = Color.white;

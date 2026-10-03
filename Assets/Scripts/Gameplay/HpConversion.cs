@@ -7,14 +7,15 @@ public static class HpConversion
     public const float TierStep = 0.10f;
     public const float MinFraction = 0.10f;
 
+    // Арифметика в decimal: на float значения вида 71,5 / 8,5 приходят как 71,4999 / 8,5000002 и округление «половина вверх» ломается.
     public static int Convert(int hpCurrent, int hpMaxOld, int hpMaxNew, PropTier tierOld, PropTier tierNew)
     {
-        float r = (float)hpCurrent / hpMaxOld;
-        float w = 1f - r;
-        float m = BaseMultiplier + TierStep * Mathf.Max(0, (int)tierNew - (int)tierOld);
-        float rNew = Mathf.Max(1f - w * m, Mathf.Min(r, MinFraction));
-        // округление «половина вверх» (как в таблице balance.md), а не банковское Mathf.RoundToInt
-        int hp = (int)System.Math.Round((double)rNew * hpMaxNew, System.MidpointRounding.AwayFromZero);
+        decimal r = (decimal)hpCurrent / hpMaxOld;
+        decimal w = 1m - r;
+        decimal m = 1.15m + 0.10m * System.Math.Max(0, (int)tierNew - (int)tierOld);
+        decimal rNew = System.Math.Max(1m - w * m, System.Math.Min(r, 0.10m));
+        // round half up (AwayFromZero при неотрицательных значениях), не банковское округление
+        int hp = (int)System.Math.Round(rNew * hpMaxNew, System.MidpointRounding.AwayFromZero);
         return Mathf.Clamp(hp, 1, hpMaxNew);
     }
 }

@@ -100,6 +100,7 @@ public static class SupermarketMapBuilder
         var spawn = new GameObject("PlayerStart"); spawn.transform.position = new Vector3(0, 0.1f, -5.5f);
         // Предметы-заглушки, игрок с камерой и менеджер раунда (вне корня Supermarket, в навмеш не попадают)
         GameplayTestSetup.Create(spawn.transform.position);
+        CombatTestSetup.Ensure();   // охотник, манекен-прячущийся, CombatAuthority
 
         // NavMesh: поверхность собирает только геометрию Supermarket
         var surf = root.gameObject.AddComponent<NavMeshSurface>();
