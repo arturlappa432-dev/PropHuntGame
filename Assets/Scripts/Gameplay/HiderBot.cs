@@ -79,8 +79,12 @@ public class HiderBot : MonoBehaviour
     bool haveThreat;
     Vector3 fleeOrigin;
     public float fleeFailsafe = 25f;      // страховка от бесконечного бега, если безопасность недостижима
-    public float weaveAmplitude = 0.55f;  // боковое виляние при побеге (доля бокового ввода)
-    public float weaveFrequency = 2.4f;   // рад/с ×2π ~ период около 2,6 с на полный зигзаг
+    public float fleeUnseenHold = 1.25f;  // сколько секунд подряд охотник не виден (и далеко), чтобы побег считался законченным
+    float unseenSince = -1f;
+    public float FleeEndUnseen;           // отладка: сколько секунд подряд охотник не был виден к моменту конца последнего побега
+    public int UnseenResets;              // отладка: сколько раз накопленная невидимость сбрасывалась (мигание видимости)
+    public float weaveAmplitude = 1.0f;   // боковое виляние при побеге (доля бокового ввода)
+    public float weaveFrequency = 3.4f;   // синус sin(t·f·2): период ~0,92 с на полный зигзаг
     public float noiseAmplitude = 2.2f;   // разброс оценки выбора предмета, перемешивается каждый раунд
     public static int RoundSalt = System.Environment.TickCount;   // новый раунд — новая соль (ReseedRound)
     float speedFactor = 1f;
@@ -459,6 +463,7 @@ public class HiderBot : MonoBehaviour
     void StartFlee()
     {
         boostIssued = false;
+        unseenSince = -1f;
         fleeRepicks = 0;
         weavePhase = (float)rng.NextDouble() * 6.28f;
         nextJumpAt = Time.time + 0.2f + (float)rng.NextDouble() * 0.5f;
@@ -497,7 +502,13 @@ public class HiderBot : MonoBehaviour
         bool los = Sense(out var hp, out float seenDist, 60f) | HunterSeesMe();
         if (los && hp != default) { threatPos = hp; haveThreat = true; lastKnownThreat = hp; lastKnownThreatAt = Time.time; }
         float dist = los && seenDist < float.MaxValue ? seenDist : DistToNearestHunter();
-        if (!los && dist >= personality.safeDistance) { BeginLook(); return; }
+        // Устойчивая невидимость: охотник должен быть вне видимости и далеко непрерывно fleeUnseenHold секунд, один кадр не считается.
+        if (!los && dist >= personality.safeDistance)
+        {
+            if (unseenSince < 0f) unseenSince = Time.time;
+            if (Time.time - unseenSince >= fleeUnseenHold) { FleeEndUnseen = Time.time - unseenSince; BeginLook(); return; }
+        }
+        else { if (unseenSince >= 0f) UnseenResets++; unseenSince = -1f; }
         if (Time.time - FleeStartedAt > fleeFailsafe) { SetState(State.Settle); return; }
         // Добежал до точки, а небезопасно — выбираем следующую точку с учётом свежей позиции охотника.
         if (ci >= corners.Length || stuckFailed)

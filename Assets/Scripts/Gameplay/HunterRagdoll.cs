@@ -51,6 +51,15 @@ public class HunterRagdoll : MonoBehaviour
         return true;
     }
 
+    // Центр тела для камеры третьего лица (по тазу/туловищу, а не по голове, чтобы не кувыркаться вместе с ней).
+    public bool TryGetBodyCenter(out Vector3 pos)
+    {
+        pos = Vector3.zero;
+        if (torso == null || pelvis == null) return false;
+        pos = (torso.t.position + pelvis.t.position) * 0.5f;
+        return true;
+    }
+
     Part Make(string name, PrimitiveType type, Vector3 localPos, Vector3 size, float mass, Material mat, Part parent, Vector3 anchorOffset)
     {
         var root = hunter.transform;

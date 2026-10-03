@@ -290,18 +290,50 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
         foreach (var l in lines) Destroy(l);
     }
 
+    public float ragdollCamDistance = 3.2f, ragdollCamHeight = 1.0f, ragdollCamBlend = 0.35f;
+    float tpBlend; bool tpValid; Vector3 tpPos; Quaternion tpRot;
+
+    // Камера за телом не должна уходить за стены: луч от цели к желаемой позиции по статике.
+    Vector3 ClampBehind(Vector3 target, Vector3 want)
+    {
+        Vector3 d = want - target; float len = d.magnitude;
+        if (len < 0.01f) return want;
+        if (Physics.SphereCast(target, 0.2f, d / len, out var hit, len, RamKickAuthority.StaticMask, QueryTriggerInteraction.Ignore))
+            return target + d / len * Mathf.Max(0.3f, hit.distance - 0.05f);
+        return want;
+    }
+
     void LateUpdate()
     {
-        if (!controlled || cam == null) return;
+        if (!controlled || cam == null) { tpBlend = 0f; return; }
+        // Третье лицо на время тарана (movement-and-camera.md / ram-kick.md): плавный вход и возврат в первое лицо после подъёма.
+        tpBlend = Mathf.MoveTowards(tpBlend, Knocked ? 1f : 0f, Time.deltaTime / ragdollCamBlend);
         if (Knocked)
         {
-            if (ragdoll.TryGetCameraPose(out var p, out var r)) cam.transform.SetPositionAndRotation(p, r);
+            if (ragdoll.TryGetBodyCenter(out var center))
+            {
+                Vector3 target = center + Vector3.up * 0.3f;
+                Vector3 back = Quaternion.Euler(0f, yaw, 0f) * Vector3.back;
+                Vector3 want = target + back * ragdollCamDistance + Vector3.up * ragdollCamHeight;
+                tpPos = ClampBehind(target, want);
+                tpRot = Quaternion.LookRotation(target - tpPos, Vector3.up);
+                tpValid = true;
+            }
+            else if (ragdoll.TryGetCameraPose(out var p, out var r)) { tpPos = p; tpRot = r; tpValid = true; }
+            if (tpValid) cam.transform.SetPositionAndRotation(tpPos, tpRot);
             return;
         }
         float dip = StumbleK * -10f;   // камера кивает вниз при спотыкании
         float recoil = Mathf.Clamp01(1f - (Time.time - lastFire) / 0.15f) * -4f;
         Quaternion rot = Quaternion.Euler(pitch + dip + recoil, yaw, StumbleK * Mathf.Sin(stumbleT * 22f) * 3f);
-        cam.transform.SetPositionAndRotation(EyePosition + Vector3.up * -0.12f * StumbleK, rot);
+        Vector3 fpPos = EyePosition + Vector3.up * -0.12f * StumbleK;
+        if (tpBlend > 0f && tpValid)
+        {
+            float k = Mathf.SmoothStep(0f, 1f, tpBlend);
+            fpPos = Vector3.Lerp(fpPos, tpPos, k);
+            rot = Quaternion.Slerp(rot, tpRot, k);
+        }
+        cam.transform.SetPositionAndRotation(fpPos, rot);
 
         // Вьюмодель с «перезарядкой»: отдача -> помпа за fireInterval. Цифрового таймера нет.
         float interval = CombatAuthority.Instance != null ? CombatAuthority.Instance.fireInterval : 1.2f;

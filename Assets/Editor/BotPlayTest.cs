@@ -14,17 +14,19 @@ using UnityEngine.AI;
 [InitializeOnLoad]
 public static class BotPlayTest
 {
-    const string Flag = "Temp/bot_test.flag", Report = "Temp/bot_test.txt";
+    const string Flag = "Temp/bot_test.flag", ChgFlag = "Temp/chg_test.flag", Report = "Temp/bot_test.txt";
     static IEnumerator run;
     static StringBuilder log = new StringBuilder();
 
     static BotPlayTest()
     {
         EditorApplication.playModeStateChanged += OnState;
-        if (File.Exists(Flag) && !EditorApplication.isPlayingOrWillChangePlaymode)
+        bool chg = File.Exists(ChgFlag);
+        if ((chg || File.Exists(Flag)) && !EditorApplication.isPlayingOrWillChangePlaymode)
         {
-            File.Delete(Flag);
+            File.Delete(chg ? ChgFlag : Flag);
             SessionState.SetBool("bottest", true);
+            SessionState.SetBool("chgtest", chg);
             EditorApplication.delayCall += () =>
             {
                 CombatTestSetup.Ensure();
@@ -40,7 +42,7 @@ public static class BotPlayTest
         {
             SessionState.SetBool("bottest", false);
             log.Clear();
-            run = Main();
+            run = SessionState.GetBool("chgtest", false) ? MainChg() : Main();
             EditorApplication.update += Tick;
         }
     }
@@ -179,6 +181,7 @@ public static class BotPlayTest
             if (b.Current != tl.last)
             {
                 tl.lines.Add($"   +{Time.time - tl.t0:F2} с: {tl.last} -> {b.Current}" + (tl.last == HiderBot.State.Flee ? $"   [конец побега: {Where(b.Hider)}, safeDistance={b.personality.safeDistance}]" : ""));
+                if (tl.last == HiderBot.State.Flee) tl.lines.Add($"      (невидим подряд к концу побега: {b.FleeEndUnseen:F2} с, сбросов счётчика за прогон: {b.UnseenResets})");
                 tl.last = b.Current;
                 if (b.Current == HiderBot.State.Reacting && !reacted) { reacted = true; reactT = Time.time; }
             }
@@ -420,6 +423,70 @@ public static class BotPlayTest
         L("итог: " + string.Join(" | ", bots.Select(b => $"{b.name}: {(b.Hider.Caught ? "пойман" : b.Current.ToString())}, HP {b.Hider.Hp}/{b.Hider.MaxHp}")));
     }
 
+    // Тест правок: устойчивая невидимость, виляние, камера охотника при таране, F4 -> NewRound.
+    static IEnumerator MainChg()
+    {
+        yield return Wait(1f);
+        hunter = HunterPlayer.All[0];
+        hunter.SetControlled(false);
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        yield return Wait(4f);
+        if (RoundState.Instance != null && RoundState.Instance.Phase == RoundPhase.Prep) RoundState.Instance.EndPrep();
+        yield return Wait(1f);
+        L($"веса виляния: amplitude={bots[0].weaveAmplitude}, frequency={bots[0].weaveFrequency}, удержание невидимости={bots[0].fleeUnseenHold} с");
+
+        // ---------- A/B: побег (near-miss), невидимость подряд и виляние ----------
+        yield return RunDetect("A near-miss (осторожный)", bots[0], false, 3f, 7f);
+        yield return RunDetect("B near-miss (наглый)", bots[1], false, 3f, 7f);
+
+        // ---------- D: F4 настоящим событием клавиши ----------
+        {
+            var tops0 = string.Join(", ", bots.Select(b => { var c = b.ScoreCandidates(); return c.Count > 0 ? c.OrderByDescending(x => x.score).First().p.ModelId + "#" + c.OrderByDescending(x => x.score).First().p.GetInstanceID() : "-"; }));
+            int salt0 = HiderBot.RoundSalt;
+            UnityEngine.InputSystem.InputSystem.settings.backgroundBehavior = UnityEngine.InputSystem.InputSettings.BackgroundBehavior.IgnoreFocus;
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (Object.FindFirstObjectByType<DebugRoleSwitch>() == null) { L("D: нет DebugRoleSwitch в сцене"); yield break; }
+            UnityEngine.InputSystem.InputSystem.QueueStateEvent(kb, new UnityEngine.InputSystem.LowLevel.KeyboardState(UnityEngine.InputSystem.Key.F4));
+            yield return null; yield return null;
+            UnityEngine.InputSystem.InputSystem.QueueStateEvent(kb, new UnityEngine.InputSystem.LowLevel.KeyboardState());
+            yield return null;
+            var tops1 = string.Join(", ", bots.Select(b => { var c = b.ScoreCandidates(); return c.Count > 0 ? c.OrderByDescending(x => x.score).First().p.ModelId + "#" + c.OrderByDescending(x => x.score).First().p.GetInstanceID() : "-"; }));
+            L($"D F4: RoundSalt {salt0} -> {HiderBot.RoundSalt} (изменился={salt0 != HiderBot.RoundSalt}); топ-1 до: [{tops0}], после: [{tops1}]");
+        }
+
+        // ---------- C: камера охотника при таране ----------
+        {
+            var cam = hunter.cam;
+            DebugRoleSwitch.Swap();   // управление охотнику, камера его
+            Vector3 foot = hunter.transform.position;
+            yield return Wait(0.3f);
+            Vector3 eye = hunter.EyePosition;
+            L($"C до тарана: камера от глаз {Vector3.Distance(cam.transform.position, eye):F2} м, Knocked={hunter.Knocked}");
+            hunter.Knock(hunter.transform.forward * -6f + Vector3.up * 3f, Vector3.right * 4f, RamKickAuthority.Instance);
+            float t0 = Time.time; bool shot = false; float maxD = 0f, minD = 99f; bool wasKnocked = true; float tEnd = -1f; float lastD = 0f; int framesTP = 0, framesAll = 0;
+            while (Time.time - t0 < 12f)
+            {
+                if (hunter.Knocked)
+                {
+                    framesAll++;
+                    var rg = hunter.GetComponentInChildren<HunterRagdoll>(true) ?? Object.FindFirstObjectByType<HunterRagdoll>();
+                    if (rg != null && rg.TryGetBodyCenter(out var ctr))
+                    {
+                        float d = Vector3.Distance(cam.transform.position, ctr); maxD = Mathf.Max(maxD, d); minD = Mathf.Min(minD, d);
+                        if (d > 0.8f) framesTP++;
+                    }
+                    if (!shot && Time.time - t0 > 1.2f) { shot = true; ScreenCapture.CaptureScreenshot("Assets/Screenshots/ram_hunter_thirdperson.png"); }
+                }
+                else if (wasKnocked) { wasKnocked = false; tEnd = Time.time; }
+                if (!wasKnocked && Time.time - tEnd > 0.8f) break;
+                yield return null;
+            }
+            lastD = Vector3.Distance(cam.transform.position, hunter.EyePosition);
+            L($"C ragdoll: кадров с Knocked={framesAll}, из них камера дальше 0,8 м от тела={framesTP}, расстояние до центра тела {minD:F2}..{maxD:F2} м; подъём окончен через {(tEnd - t0):F1} с; 0,8 с после — камера от глаз {lastD:F3} м, Knocked={hunter.Knocked}");
+            DebugRoleSwitch.Swap();
+        }
+    }
+
     // Одно обнаружение: охотник встаёт на 5-7 м с видимостью, стреляет (мимо рядом / прямо в бота), следим за реакцией.
     static IEnumerator RunDetect(string title, HiderBot b, bool hit, float minD, float maxD, string shotName = null)
     {
@@ -451,4 +518,3 @@ public static class BotPlayTest
         yield return Wait(Mathf.Max(0.1f, 1.3f - (Time.time - tFire)));
     }
 }
-// touch

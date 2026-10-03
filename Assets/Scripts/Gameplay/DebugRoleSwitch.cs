@@ -11,6 +11,14 @@ public class DebugRoleSwitch : MonoBehaviour
         if (kb == null) return;
         if (kb.f3Key.wasPressedThisFrame && RoundState.Instance != null && RoundState.Instance.Phase == RoundPhase.Prep) RoundState.Instance.EndPrep();
         if (kb.f2Key.wasPressedThisFrame) Swap();
+        if (kb.f4Key.wasPressedThisFrame) NewBotRound();
+    }
+
+    // F4: вручную вызывает HiderBot.NewRound() у всех ботов, чтобы проверять разнообразие выбора предметов до появления системы раундов.
+    public static void NewBotRound()
+    {
+        HiderBot.NewRound();
+        Debug.Log($"[отладка] F4: HiderBot.NewRound() для {HiderBot.All.Count} ботов");
     }
 
     public static void Swap()
