@@ -166,7 +166,7 @@ public static class BotPlayTest
     static void SetField(object o, string name, object v) { o.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance).SetValue(o, v); }
     static void Morph(HiderPlayer h, Prop sample) { typeof(HiderPlayer).GetMethod("Morph", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(h, new object[] { sample }); }
 
-    class Timeline { public List<string> lines = new List<string>(); public float t0; public HiderBot.State last; public float maxMoved; public Vector3 start; public bool hunterKnocked; public float lastTrace; }
+    class Timeline { public List<string> lines = new List<string>(); public float t0; public HiderBot.State last; public float maxMoved; public Vector3 start; public bool hunterKnocked; public float lastTrace; public int weaveFlips; public float maxJump; float lastSign; public void Flip(float x) { float sg = Mathf.Abs(x) < 0.05f ? lastSign : Mathf.Sign(x); if (sg != 0 && lastSign != 0 && sg != lastSign) weaveFlips++; lastSign = sg; } }
 
     // Следит за ботом: переходы состояний с временем от t0, максимум удаления от старта, был ли охотник сбит.
     static IEnumerator Track(HiderBot b, Timeline tl, float maxSec, float minAfterReact, string shot = null, float shotAt = 0.5f)
@@ -178,10 +178,11 @@ public static class BotPlayTest
         {
             if (b.Current != tl.last)
             {
-                tl.lines.Add($"   +{Time.time - tl.t0:F2} с: {tl.last} -> {b.Current}");
+                tl.lines.Add($"   +{Time.time - tl.t0:F2} с: {tl.last} -> {b.Current}" + (tl.last == HiderBot.State.Flee ? $"   [конец побега: {Where(b.Hider)}, safeDistance={b.personality.safeDistance}]" : ""));
                 tl.last = b.Current;
                 if (b.Current == HiderBot.State.Reacting && !reacted) { reacted = true; reactT = Time.time; }
             }
+            if (b.Current == HiderBot.State.Flee) { tl.Flip(b.Hider.botInput.move.x); tl.maxJump = Mathf.Max(tl.maxJump, b.Hider.transform.position.y - tl.start.y); }
             tl.maxMoved = Mathf.Max(tl.maxMoved, Vector3.Distance(tl.start, b.Hider.transform.position));
             if (Time.time - tl.lastTrace >= 1f) { tl.lastTrace = Time.time; var q = b.Hider.transform.position; tl.lines.Add($"      [{Time.time - tl.t0:F1} с] ({q.x:F1};{q.y:F2};{q.z:F1}) {b.Current}"); }
             if (hunter.Knocked) tl.hunterKnocked = true;
@@ -206,7 +207,7 @@ public static class BotPlayTest
         hunter.SetControlled(false);
         var bots = HiderBot.All.OrderBy(b => b.name).ToList();
         L($"ботов: {bots.Count}; охотник={hunter != null}; навмеш: триангуляция вершин={NavMesh.CalculateTriangulation().vertices.Length}");
-        foreach (var b in bots) L($"  {b.name}: личность={b.personality.name} реакция={b.personality.reactionDelay} с, бег={b.personality.fleeDuration} с, шанс тарана={b.personality.ramChance}, перемещение каждые {b.personality.relocateEvery} с, видит охотника до {b.personality.noticeRange} м");
+        foreach (var b in bots) L($"  {b.name}: личность={b.personality.name} реакция={b.personality.reactionDelay} с, безопасная дистанция={b.personality.safeDistance} м, шанс тарана={b.personality.ramChance}, перемещение каждые {b.personality.relocateEvery} с, видит охотника до {b.personality.noticeRange} м");
 
         // ---------- карта навмеша: '#' пол, связный со входом; 'o' пол, несвязный; '^' только выше пола; '.' нет ----------
         {
@@ -256,6 +257,20 @@ public static class BotPlayTest
 
         DebugRoleSwitch.Swap();   // камера у охотника: скриншоты его глазами
         yield return Wait(0.3f);
+
+        // ---------- T1b: выбор предмета меняется от раунда к раунду ----------
+        {
+            var picks = new List<string>();
+            for (int r = 0; r < 8; r++)
+            {
+                HiderBot.NewRound();
+                picks.Add(string.Join(" / ", bots.Select(bb => { var c = bb.ScoreCandidates(); return c.Count > 0 ? $"{c[0].p.ModelId}@({c[0].p.transform.position.x:F1};{c[0].p.transform.position.z:F1})" : "-"; })));
+            }
+            for (int r = 0; r < picks.Count; r++) L($"T1b раунд {r + 1}: топ-1 кандидат по ботам: {picks[r]}");
+            L($"T1b уникальных наборов из {picks.Count}: {picks.Distinct().Count()}");
+            var sep = new[] { " / " };
+            for (int bi = 0; bi < bots.Count; bi++) { int bi2 = bi; int uniq = picks.Select(x => x.Split(sep, System.StringSplitOptions.None)[bi2]).Distinct().Count(); L($"T1b {bots[bi].name}: уникальных топ-1 предметов за 8 раундов: {uniq}"); }
+        }
 
         // ---------- T2: простое приближение охотника НЕ вызывает побега ----------
         foreach (var b in bots.Take(2))
@@ -431,7 +446,9 @@ public static class BotPlayTest
         if (b == null || b.Hider == null || b.Hider.Caught) { L($"{title}: {botName} ({modelBefore}) с {dist:F1} м: бот ПОЙМАН (HP {hp0} -> 0)"); foreach (var line in tl.lines) L(line); yield break; }
         L($"{title}: {b.name} ({b.personality.name}, {modelBefore} {b.Hider.CurrentProp.tier}) с {dist:F1} м; HP {hp0}->{b.Hider.Hp}; обнаружение зафиксировано={b.DetectedAt > det0} ({b.LastDetect}); реакция до бега: {(b.FleeStartedAt - b.DetectedAt):F2} с (ожидаем ~{b.personality.reactionDelay}); максимум удалился {tl.maxMoved:F1} м; Z использован={(b.Hider.Boost != HiderPlayer.BoostPhase.Ready)}; облик после: {b.Hider.CurrentProp.ModelId}; {Where(b.Hider)}; состояние {b.Current}");
         foreach (var line in tl.lines) L(line);
-        L($"   бег длился (Flee->Freeze): {(tl.lines.Count > 0 ? "см. выше" : "нет")}, личность fleeDuration={b.personality.fleeDuration} с");
+        L($"   уклонение: смен знака бокового ввода {tl.weaveFlips}, макс. подъём над стартом {tl.maxJump:F2} м");
+        L($"   бег длился (Flee->Freeze): {(tl.lines.Count > 0 ? "см. выше" : "нет")}, личность safeDistance={b.personality.safeDistance} м");
         yield return Wait(Mathf.Max(0.1f, 1.3f - (Time.time - tFire)));
     }
 }
+// touch

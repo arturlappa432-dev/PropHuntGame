@@ -26,9 +26,7 @@ public class CombatAuthority : MonoBehaviour
     public int pellets = 9;
     public float spreadDegrees = 1.5f;
     public float nearMissRadius = 1.5f;        // hunter-combat.md: ~1,5 м
-    public float nearMissMinDistance = 2f;     // вплотную свист не слышен (громкость 0), буст остаётся
-    public float missBoostDuration = 1.5f;     // balance.md: 1-2 сек
-    public float missBoostMultiplier = 1.5f;   // величина в документах не задана; взята ×1,5 как у ускорения (boost.md)
+    public float nearMissMinDistance = 2f;     // вплотную свист не слышен (громкость 0)
 
     public Material hunterMaterial, gunMaterial, puffMaterial;
     public Transform hunterSpawn;
@@ -97,7 +95,7 @@ public class CombatAuthority : MonoBehaviour
             foreach (var e in ends)
                 if (DistToSegment(c, origin, e) <= nearMissRadius)
                 {
-                    h.OnNearMiss(hd, missBoostDuration, missBoostMultiplier);
+                    h.OnNearMiss(hd);
                     res.nearMisses++;
                     break;
                 }

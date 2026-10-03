@@ -47,7 +47,6 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public Vector3 HorizontalVelocity { get { var v = cc.velocity; v.y = 0f; return v; } }
     public enum StunPhase { None, Flight, Out, Realign }   // пинок: кувырок -> «в отключке» (звёзды) -> самовыравнивание
     public StunPhase Stun { get; private set; } = StunPhase.None;
-    public bool Boosted => Time.time < boostUntil;
     public Prop CurrentProp { get; private set; }
     public Prop Target { get; private set; }
     public int Hp { get; private set; }
@@ -68,7 +67,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     bool thirdPerson, busy, eConsumed;
     float windup = -1f, squash = 1f, camKick, camKickVel;
     bool wasAirborne;
-    float boostUntil, boostMult = 1f, hitFlashUntil;
+    float hitFlashUntil;
     Vector3 propBaseScale = Vector3.one, stickBaseScale = Vector3.one;
     AudioSource sfx;
     AudioClip landClip;
@@ -171,7 +170,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             if (kb.aKey.isPressed) input.x -= 1;
         }
         if (botInput != null) { input.x = botInput.move.x; input.z = botInput.move.y; }
-        Vector3 move = look * input.normalized * walkSpeed * (Boosted ? boostMult : 1f) * (Sliding ? boostSpeedMult : 1f);
+        Vector3 move = look * input.normalized * walkSpeed * (Sliding ? boostSpeedMult : 1f);
         slideMoving = Sliding && input.sqrMagnitude > 0.01f;
         bool grounded = cc.isGrounded;
         if (grounded && wasAirborne) Land(-vy);
@@ -665,12 +664,10 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         return Hp <= 0;
     }
 
-    // near-miss: свист слышит только этот прячущийся (2D-звук), и он же получает буст скорости.
-    public void OnNearMiss(float hunterDistance, float boostSeconds, float boostMultiplier)
+    // near-miss: свист слышит только этот прячущийся (2D-звук); игровых последствий нет (буст только от Z, hunter-combat.md).
+    public void OnNearMiss(float hunterDistance)
     {
         if (Caught) return;
-        boostUntil = Time.time + boostSeconds;
-        boostMult = boostMultiplier;
         Detected?.Invoke(DetectKind.NearMiss);
         if (controlled && sfx != null) sfx.PlayOneShot(CombatAudio.Whistle, CombatAudio.WhistleVolume(hunterDistance));
     }
@@ -771,7 +768,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         string phase = round == null ? "" : round.Phase == RoundPhase.Prep ? $"Подготовка: {round.PrepRemaining:0} с" : "Охота";
         float cd = Mathf.Max(0, NextRepossessTime - Time.time);
         string cdText = CurrentProp == null ? "" : cd > 0 ? $"   Смена облика: {cd:0.0} с" : "   Смена облика: готово";
-        GUI.Label(new Rect(12, 8, 900, 28), $"{phase}   HP: {Hp}/{MaxHp}{cdText}{(Boosted ? "   БУСТ" : "")}", style);
+        GUI.Label(new Rect(12, 8, 900, 28), $"{phase}   HP: {Hp}/{MaxHp}{cdText}", style);
         if (Target != null) GUI.Label(new Rect(Screen.width / 2f - 60, Screen.height / 2f + 16, 200, 26), "[E] вселиться", style);
         if (Toast.Length > 0) GUI.Label(new Rect(Screen.width / 2f - 100, Screen.height / 2f + 44, 400, 26), Toast, style);
         GUI.color = Color.white;
