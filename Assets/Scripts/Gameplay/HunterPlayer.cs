@@ -17,6 +17,9 @@ public class HunterPlayer : MonoBehaviour
     public float stumbleDuration = 0.7f;
 
     public float NextShotTime;
+    public float NextKickTime;            // пинок: отдельный кулдаун от дробовика
+    public float KnockImmuneUntil;        // окно неуязвимости к повторному тарану после подъёма (привязано к жертве)
+    public bool Knocked => ragdoll != null;
     public Vector3 EyePosition => transform.position + Vector3.up * height * 0.94f;
     public bool IsBlocked => RoundState.Instance != null && RoundState.Instance.Phase == RoundPhase.Prep;
     public string LastShot { get; private set; } = "";
@@ -24,7 +27,10 @@ public class HunterPlayer : MonoBehaviour
     CharacterController cc;
     [SerializeField] Transform pivot, gun;
     [SerializeField] GameObject viewModel;
-    float yaw, pitch, vy, stumbleT = -1f, lastFire = -10f;
+    float yaw, pitch, vy, stumbleT = -1f, lastFire = -10f, kickT = -1f;
+    HunterRagdoll ragdoll;
+    Material bodyMaterial;
+    const float KickAnimTime = 0.3f;
     AudioSource sfx;
     Material tracerMat;
 
@@ -52,6 +58,7 @@ public class HunterPlayer : MonoBehaviour
         body.transform.localPosition = new Vector3(0, 0.9f, 0);
         body.transform.localScale = new Vector3(0.5f, 0.9f, 0.5f);
         if (bodyMat != null) body.GetComponent<Renderer>().sharedMaterial = bodyMat;
+        h.bodyMaterial = bodyMat;
         var g = GameObject.CreatePrimitive(PrimitiveType.Cube);
         g.name = "Shotgun";
         Kill(g.GetComponent<Collider>());
@@ -108,11 +115,12 @@ public class HunterPlayer : MonoBehaviour
         if (pivot == null) return;
         int layer = controlled && OwnBodyLayer >= 0 ? OwnBodyLayer : 0;
         foreach (var t in pivot.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
-        viewModel.SetActive(controlled);
+        viewModel.SetActive(controlled && !Knocked);
     }
 
     void Update()
     {
+        if (Knocked) return;   // под ragdoll: ввода нет, тело ведёт физика
         var kb = controlled ? Keyboard.current : null;
         var mouse = controlled ? Mouse.current : null;
         if (mouse != null && Cursor.lockState == CursorLockMode.Locked)
@@ -124,6 +132,7 @@ public class HunterPlayer : MonoBehaviour
         if (controlled) transform.rotation = Quaternion.Euler(0, yaw, 0);
         Move(kb);
         if (mouse != null && mouse.leftButton.wasPressedThisFrame) Fire();
+        if (mouse != null && mouse.rightButton.wasPressedThisFrame) Kick();
         UpdateStumble();
     }
 
@@ -180,6 +189,50 @@ public class HunterPlayer : MonoBehaviour
 #endif
     }
 
+    // Пинок (ПКМ): решает RamKickAuthority. Промах даёт тот же телл, что промах дробовика (звук + спотыкание).
+    public void Kick()
+    {
+        var auth = RamKickAuthority.Instance;
+        Vector3 origin = cam != null && controlled ? cam.transform.position : EyePosition;
+        Vector3 fwd = cam != null && controlled ? cam.transform.forward : Quaternion.Euler(pitch, yaw, 0) * Vector3.forward;
+        var res = auth.TryKick(this, origin, fwd);
+        if (!res.fired) return;
+        kickT = 0f;
+        if (res.hit) CombatAudio.PlayAt(CombatAudio.Hit, origin + fwd, 1f, controlled);
+        else Stumble();
+#if UNITY_EDITOR
+        Debug.Log($"[hunter kick] {(res.hit ? "попал" : "промах")}");
+#endif
+    }
+
+    // Таран: ragdoll на упрощённом риге. Импульс задаётся явно, телу и камере; CharacterController выключается.
+    public void Knock(Vector3 launch, Vector3 spin, RamKickAuthority auth)
+    {
+        if (Knocked) return;
+        stumbleT = -1f; kickT = -1f;
+        UpdateStumble();
+        Pose camPose = cam != null && controlled ? new Pose(cam.transform.position, cam.transform.rotation)
+            : new Pose(EyePosition, Quaternion.Euler(pitch, yaw, 0));
+        cc.enabled = false;
+        viewModel.SetActive(false);
+        var bodyMat = bodyMaterial != null ? bodyMaterial : pivot.GetComponentInChildren<Renderer>().sharedMaterial;
+        ragdoll = HunterRagdoll.Begin(this, launch, spin, auth, bodyMat, gun, camPose);
+        pivot.gameObject.SetActive(false);   // капсула прячется, вместо неё 7 тел ragdoll (дробовик ушёл в руку)
+    }
+
+    // Подъём закончен: охотник стоит на проверенной точке, управление возвращается.
+    public void EndKnock(Vector3 foot, float yawDeg, float immuneUntil)
+    {
+        ragdoll = null;
+        transform.position = foot;
+        yaw = yawDeg; pitch = 0f; vy = 0f;
+        transform.rotation = Quaternion.Euler(0, yaw, 0);
+        pivot.gameObject.SetActive(true);
+        cc.enabled = true;
+        KnockImmuneUntil = immuneUntil;
+        ApplyControlled();
+    }
+
     // Телл промаха: звук + спотыкание (видно прячущимся поблизости). Без штрафа к перезарядке.
     void Stumble()
     {
@@ -200,6 +253,14 @@ public class HunterPlayer : MonoBehaviour
         float wob = Mathf.Sin(stumbleT * 22f) * 6f * k;
         pivot.localRotation = Quaternion.Euler(28f * k, 0f, wob);
         pivot.localPosition = new Vector3(0, 0, 0.12f * k);
+        if (kickT >= 0f)
+        {
+            kickT += Time.deltaTime;
+            float kk = Mathf.Sin(Mathf.PI * Mathf.Clamp01(kickT / KickAnimTime));   // выпад: шаг вперёд с наклоном назад
+            pivot.localRotation *= Quaternion.Euler(-14f * kk, 0f, 0f);
+            pivot.localPosition += new Vector3(0, 0, 0.3f * kk);
+            if (kickT >= KickAnimTime) kickT = -1f;
+        }
     }
 
     System.Collections.IEnumerator Tracers(Vector3 origin, Vector3[] ends)
@@ -224,6 +285,12 @@ public class HunterPlayer : MonoBehaviour
     void LateUpdate()
     {
         if (!controlled || cam == null) return;
+        if (Knocked)
+        {
+            if (ragdoll.TryGetCameraPose(out var p, out var r)) cam.transform.SetPositionAndRotation(p, r);
+            cam.cullingMask = ~0;
+            return;
+        }
         float dip = StumbleK * -10f;   // камера кивает вниз при спотыкании
         float recoil = Mathf.Clamp01(1f - (Time.time - lastFire) / 0.15f) * -4f;
         Quaternion rot = Quaternion.Euler(pitch + dip + recoil, yaw, StumbleK * Mathf.Sin(stumbleT * 22f) * 3f);

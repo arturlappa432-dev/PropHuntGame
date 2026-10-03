@@ -37,7 +37,10 @@ public class HiderPlayer : MonoBehaviour
 
     public bool Caught { get; private set; }
     public bool IsAlive => !Caught;
-    public Vector3 BodyCenter => transform.position + Vector3.up * BodyHeight * 0.5f;
+    public Vector3 BodyCenter => Stun != StunPhase.None && CurrentProp != null ? CurrentProp.transform.position : transform.position + Vector3.up * BodyHeight * 0.5f;
+    public Vector3 HorizontalVelocity { get { var v = cc.velocity; v.y = 0f; return v; } }
+    public enum StunPhase { None, Flight, Out, Realign }   // пинок: кувырок -> «в отключке» (звёзды) -> самовыравнивание
+    public StunPhase Stun { get; private set; } = StunPhase.None;
     public bool Boosted => Time.time < boostUntil;
     public Prop CurrentProp { get; private set; }
     public Prop Target { get; private set; }
@@ -46,7 +49,7 @@ public class HiderPlayer : MonoBehaviour
     public float NextRepossessTime { get; private set; }
     public string Toast { get; private set; } = "";
 
-    public Vector3 EyePosition => transform.position + Vector3.up * EyeHeight;
+    public Vector3 EyePosition => Stun != StunPhase.None && CurrentProp != null ? CurrentProp.transform.position + Vector3.up * CurrentProp.height * 0.4f : transform.position + Vector3.up * EyeHeight;
     float EyeHeight => CurrentProp == null ? StickmanHeight * 0.9f : Mathf.Max(0.25f, CurrentProp.height * 0.9f);
     public float StickmanHeight => hunterHeight / stickmanRatio;
     public float BodyHeight => CurrentProp == null ? StickmanHeight : CurrentProp.height;
@@ -113,6 +116,7 @@ public class HiderPlayer : MonoBehaviour
         if (!busy)
         {
             Move(kb);
+            if (Sliding && CurrentProp != null) RamKickAuthority.Instance.TryRam(this);   // таран только во время ускорения
             if (controlled) UpdateTarget();
             if (kb != null && kb.eKey.wasPressedThisFrame && MorphReady) { PressPossess(); eConsumed = true; }
             else if (kb != null && kb.eKey.wasPressedThisFrame && CurrentProp == null) PressPossess();
@@ -495,6 +499,112 @@ public class HiderPlayer : MonoBehaviour
         if (on) Cursor.lockState = CursorLockMode.Locked;
     }
 
+    // --- Пинок (RamKickAuthority): настоящий Rigidbody предмета, потом «в отключке» и самовыравнивание ---
+
+    Coroutine stunCo;
+    Rigidbody propRb;
+    StunStars stars;
+    Vector3 preKickFoot;
+
+    public void BeginKicked(Vector3 launch, Vector3 spin, RamKickAuthority a)
+    {
+        if (Caught || CurrentProp == null || Stun != StunPhase.None) return;
+        stunCo = StartCoroutine(StunRoutine(launch, spin, a));
+    }
+
+    IEnumerator StunRoutine(Vector3 launch, Vector3 spin, RamKickAuthority a)
+    {
+        var prop = CurrentProp;
+        busy = true; Stun = StunPhase.Flight; slideMoving = false;
+        if (Target != null) { Target.SetHighlight(false, outlineMaterial); Target = null; }
+        windup = -1f; squash = 1f; vy = 0f;
+        preKickFoot = transform.position;
+        cc.enabled = false;
+
+        // Фаза 1: полёт/кувырок. Rigidbody на самом предмете (он ребёнок корня, корень стоит); управления нет, хаотичность даёт физика.
+        propRb = prop.gameObject.AddComponent<Rigidbody>();
+        propRb.mass = RamKickAuthority.MassOf(prop.tier);
+        propRb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        propRb.angularDamping = 0.2f;
+        propRb.maxAngularVelocity = 20f;
+        var mat = new PhysicsMaterial { bounciness = 0.35f, dynamicFriction = 0.5f, staticFriction = 0.6f, bounceCombine = PhysicsMaterialCombine.Maximum };
+        foreach (var c in prop.Colliders) if (c != null) c.material = mat;
+        propRb.AddForce(launch * propRb.mass, ForceMode.Impulse);
+        propRb.AddTorque(spin, ForceMode.VelocityChange);
+
+        float t = 0f, calm = 0f;
+        while (t < a.flightMaxTime)   // оседание: стоит на месте ~0,2 с или вышло время; берём меньшее
+        {
+            yield return null;
+            t += Time.deltaTime;
+            if (t > 0.3f && propRb.linearVelocity.sqrMagnitude < 0.04f && propRb.angularVelocity.sqrMagnitude < 0.25f) { calm += Time.deltaTime; if (calm > 0.2f) break; }
+            else calm = 0f;
+        }
+
+        // Фаза 2: «в отключке» — лёгкое кинематическое состояние до конца таймера оглушения, звёзды над предметом.
+        // (Выражение лица «оглушён» не делаем: лиц ещё нет, systems/faces.md не реализован.)
+        propRb.linearVelocity = Vector3.zero; propRb.angularVelocity = Vector3.zero;
+        propRb.isKinematic = true;
+        Stun = StunPhase.Out;
+        stars = StunStars.Create(prop);
+        while (t < a.stunDuration) { yield return null; t += Time.deltaTime; }
+
+        // Фаза 3: самовыравнивание Slerp к вертикали + коррекция позиции (ближайшая свободная точка, провал/далеко — прежнее место).
+        Stun = StunPhase.Realign;
+        if (stars != null) Destroy(stars.gameObject);
+        stars = null;
+        float radius = Mathf.Clamp(Mathf.Min(prop.footRadius, prop.height * 0.5f), cc.skinWidth * 2f, 0.5f);
+        Vector3 c0 = prop.transform.position;
+        Vector3 foot = RamKickAuthority.FindStandPoint(c0, radius, prop.height, preKickFoot);
+        Vector3 center = foot + Vector3.up * (prop.height * 0.5f);
+        Quaternion upright = transform.rotation * Quaternion.Euler(0f, propYaw, 0f);
+        Quaternion r0 = prop.transform.rotation;
+        for (float u = 0f; u < a.realignDuration; u += Time.deltaTime)
+        {
+            float k = Mathf.SmoothStep(0f, 1f, u / a.realignDuration);
+            prop.transform.SetPositionAndRotation(Vector3.Lerp(c0, center, k), Quaternion.Slerp(r0, upright, k));
+            yield return null;
+        }
+        FinishStun(foot);
+    }
+
+    // Возврат управления: корень встаёт на проверенную точку, предмет снова ребёнок корня в исходной ориентации.
+    void FinishStun(Vector3 foot)
+    {
+        var prop = CurrentProp;
+        if (propRb != null) Destroy(propRb);
+        propRb = null;
+        if (stars != null) Destroy(stars.gameObject);
+        stars = null;
+        transform.position = foot;
+        prop.transform.localPosition = new Vector3(0f, prop.height * 0.5f, 0f);
+        prop.transform.localRotation = Quaternion.Euler(0f, propYaw, 0f);
+        cc.enabled = true;
+        vy = 0f;
+        Stun = StunPhase.None;
+        busy = false;
+        stunCo = null;
+    }
+
+    // Поймали во время оглушения: прерываем последовательность и убираем физику/звёзды.
+    void AbortStun()
+    {
+        if (stunCo != null) StopCoroutine(stunCo);
+        if (CurrentProp != null)
+        {
+            Vector3 center = CurrentProp.transform.position;
+            if (propRb != null) Destroy(propRb);
+            propRb = null;
+            CurrentProp.transform.localRotation = Quaternion.identity;
+            transform.position = center - Vector3.up * CurrentProp.height * 0.5f;
+            CurrentProp.transform.localPosition = new Vector3(0f, CurrentProp.height * 0.5f, 0f);
+        }
+        if (stars != null) Destroy(stars.gameObject);
+        stars = null;
+        Stun = StunPhase.None;
+        stunCo = null;
+    }
+
     // --- Бой (вызывает CombatAuthority; на хосте при переходе на сеть) ---
 
     // Урон от выстрела; true, если HP дошло до 0.
@@ -521,6 +631,7 @@ public class HiderPlayer : MonoBehaviour
     {
         if (Caught) return;
         Caught = true;
+        if (Stun != StunPhase.None) AbortStun();
         StartCoroutine(CaughtRoutine(by));
     }
 
