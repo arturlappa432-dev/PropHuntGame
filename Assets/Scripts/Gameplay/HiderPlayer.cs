@@ -402,11 +402,12 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     {
         int oldMax = MaxHp, oldHp = Hp;
         PropTier oldTier = CurrentProp.tier;
+        bool sameModel = CurrentProp.ModelId == sample.ModelId;   // идентичная модель: HP не пересчитываем (possession.md, «Исключение»)
         CurrentProp.CopyAppearanceFrom(sample);
         propBaseScale = CurrentProp.transform.localScale;
         ApplyBodyShape(CurrentProp);
         MaxHp = CurrentProp.MaxHp;
-        Hp = HpConversion.Convert(oldHp, oldMax, MaxHp, oldTier, CurrentProp.tier);
+        Hp = sameModel ? oldHp : HpConversion.Convert(oldHp, oldMax, MaxHp, oldTier, CurrentProp.tier);
         NextRepossessTime = Time.time + PossessionAuthority.Instance.repossessCooldown;
         float size = Mathf.Max(CurrentProp.height, CurrentProp.footRadius * 2f);
         PuffEffect.Spawn(transform.position + Vector3.up * (CurrentProp.height * 0.5f), size, puffMaterial);
@@ -504,6 +505,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     // --- Пинок (RamKickAuthority): настоящий Rigidbody предмета, потом «в отключке» и самовыравнивание ---
 
     Coroutine stunCo;
+    HpBar hpBar;
     Rigidbody propRb;
     StunStars stars;
     Vector3 preKickFoot;
@@ -527,20 +529,38 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         propRb = prop.gameObject.AddComponent<Rigidbody>();
         propRb.mass = RamKickAuthority.MassOf(prop.tier);
         propRb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-        propRb.angularDamping = 0.2f;
+        propRb.angularDamping = 0.8f;   // иначе банка катится бесконечно (в PhysX нет сопротивления качению)
+        propRb.linearDamping = 0.1f;
         propRb.maxAngularVelocity = 20f;
         var mat = new PhysicsMaterial { bounciness = 0.35f, dynamicFriction = 0.5f, staticFriction = 0.6f, bounceCombine = PhysicsMaterialCombine.Maximum };
         foreach (var c in prop.Colliders) if (c != null) c.material = mat;
         propRb.AddForce(launch * propRb.mass, ForceMode.Impulse);
         propRb.AddTorque(spin, ForceMode.VelocityChange);
+        var probe = prop.gameObject.AddComponent<KickContactProbe>();
 
+        // Фаза 1 заканчивается, только когда предмет реально осел: низкие линейная и угловая скорости удерживаются
+        // settleHold секунд при контакте с опорой под телом (либо Rigidbody уснул на опоре). flightMaxTime — лишь страховка.
         float t = 0f, calm = 0f;
-        while (t < a.flightMaxTime)   // оседание: стоит на месте ~0,2 с или вышло время; берём меньшее
+        bool forced = false;
+        while (true)
         {
             yield return null;
             t += Time.deltaTime;
-            if (t > 0.3f && propRb.linearVelocity.sqrMagnitude < 0.04f && propRb.angularVelocity.sqrMagnitude < 0.25f) { calm += Time.deltaTime; if (calm > 0.2f) break; }
+            if (prop.transform.position.y < -2f || t >= a.flightMaxTime) { forced = true; break; }
+            // PhysX не имеет сопротивления качению: после касания земли добавляем торможение, иначе банка/корзина катятся десятки метров
+            if (t > 0.4f && probe.Supported()) { propRb.linearDamping = 1.5f; propRb.angularDamping = 3f; }
+            bool slow = propRb.linearVelocity.sqrMagnitude < a.settleSpeed * a.settleSpeed && propRb.angularVelocity.sqrMagnitude < a.settleAngular * a.settleAngular;
+            if (t > 0.2f && probe.Supported() && (slow || propRb.IsSleeping())) { calm += Time.deltaTime; if (calm >= a.settleHold) break; }
             else calm = 0f;
+        }
+        Destroy(probe);
+
+        // Страховка сработала (физика застряла или улетел за карту): не замораживаем в воздухе, а ставим на ближайшую опору.
+        if (forced)
+        {
+            float r0f = Mathf.Clamp(Mathf.Min(prop.footRadius, prop.height * 0.5f), cc.skinWidth * 2f, 0.5f);
+            Vector3 stand = RamKickAuthority.FindStandPoint(prop.transform.position, r0f, prop.height, preKickFoot);
+            prop.transform.position = stand + Vector3.up * (prop.height * 0.5f);
         }
 
         // Фаза 2: «в отключке» — лёгкое кинематическое состояние до конца таймера оглушения, звёзды над предметом.
@@ -549,7 +569,8 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         propRb.isKinematic = true;
         Stun = StunPhase.Out;
         stars = StunStars.Create(prop);
-        while (t < a.stunDuration) { yield return null; t += Time.deltaTime; }
+        float outEnd = Mathf.Max(a.stunDuration, t + a.minOutDuration);
+        while (t < outEnd) { yield return null; t += Time.deltaTime; }
 
         // Фаза 3: самовыравнивание Slerp к вертикали + коррекция позиции (ближайшая свободная точка, провал/далеко — прежнее место).
         Stun = StunPhase.Realign;
@@ -595,6 +616,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         if (CurrentProp != null)
         {
             Vector3 center = CurrentProp.transform.position;
+            var pr = CurrentProp.GetComponent<KickContactProbe>(); if (pr != null) Destroy(pr);
             if (propRb != null) Destroy(propRb);
             propRb = null;
             CurrentProp.transform.localRotation = Quaternion.identity;
@@ -615,6 +637,8 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         if (Caught) return false;
         Hp = Mathf.Max(0, Hp - damage);
         hitFlashUntil = Time.time + 0.25f;
+        if (hpBar == null) hpBar = HpBar.Attach(this);
+        hpBar.Show(Hp, MaxHp);
         CombatAudio.PlayAt(CombatAudio.Hit, BodyCenter, 1f, controlled);
         return Hp <= 0;
     }
@@ -633,6 +657,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     {
         if (Caught) return;
         Caught = true;
+        if (hpBar != null) Destroy(hpBar.gameObject);
         if (Stun != StunPhase.None) AbortStun();
         StartCoroutine(CaughtRoutine(by));
     }

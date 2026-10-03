@@ -34,14 +34,20 @@ public class RamKickAuthority : MonoBehaviour
     public float getUpDuration = 0.8f;              // процедурный подъём без клипов (для демо: «простой подъём»)
 
     // --- Пинок ---
-    public float kickRange = 1.8f;
-    public float kickRadius = 0.35f;
+    public PropTier kickMaxTier = PropTier.Small;   // ram-kick.md: только крошечные и маленькие
+    public float kickZoneRadius = 1.0f;             // зона у ног: сфера радиусом ~0,8-1 м (предложено)
+    public float kickZoneHeight = 0.9f;             // от ступней вверх: выше «колена/бедра» не бьём
+    public float kickZoneForward = 0.2f;            // смещение центра зоны вперёд по корпусу
     public float kickCooldown = 2f;                 // отдельный от дробовика
     public float kickSpeed = 7f;                    // м/с горизонтально (до множителя тира)
     public float kickLift = 3.5f;
     public float kickSpin = 9f;                     // рад/с хаотичного вращения
     public float stunDuration = 3f;                 // полный таймер оглушения от момента пинка
-    public float flightMaxTime = 1.5f;              // «меньшее из двух»: осел или прошло столько
+    public float flightMaxTime = 6f;                // только страховка от застрявшей физики; обычно фазу 1 завершает проверка «осел»
+    public float settleSpeed = 0.15f;               // «осел»: линейная скорость ниже, м/с
+    public float settleAngular = 0.6f;              // и угловая ниже, рад/с
+    public float settleHold = 0.25f;                // удерживается столько секунд при контакте с опорой
+    public float minOutDuration = 1f;               // «в отключке» не короче, даже если полёт занял почти весь таймер
     public float realignDuration = 0.4f;            // balance/ram-kick: ~0,3-0,5 с
 
     static readonly float[] KickTierFactor = { 1.2f, 1f, 0.8f, 0.65f };
@@ -66,32 +72,52 @@ public class RamKickAuthority : MonoBehaviour
 
     // --- Пинок ---
 
-    public KickResult TryKick(HunterPlayer kicker, Vector3 origin, Vector3 forward)
+    // Цель определяется зоной у ног охотника, а не прицелом (ram-kick.md): ближайший подходящий предмет в зоне.
+    public KickResult TryKick(HunterPlayer kicker)
     {
         var res = new KickResult();
         if (kicker.Knocked || kicker.IsBlocked || Time.time < kicker.NextKickTime) return res;
         kicker.NextKickTime = Time.time + kickCooldown;
         res.fired = true;
 
+        Vector3 feet = kicker.transform.position;
+        Vector3 bodyFwd = Vector3.ProjectOnPlane(kicker.transform.forward, Vector3.up).normalized;
+        Vector3 zone = feet + Vector3.up * kickZoneHeight * 0.5f + bodyFwd * kickZoneForward;
+        float zoneRadius = Mathf.Max(kickZoneRadius, kickZoneHeight * 0.5f);
+
         HiderPlayer victim = null;
-        var hits = Physics.SphereCastAll(origin, kickRadius, forward, kickRange, ~0, QueryTriggerInteraction.Ignore);
-        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-        foreach (var h in hits)
+        float best = float.MaxValue;
+        foreach (var h in HiderPlayer.All)
         {
-            if (h.collider.GetComponentInParent<HunterPlayer>() == kicker) continue;
-            victim = h.collider.GetComponentInParent<HiderPlayer>();
-            break;   // первое чужое попадание заслоняет всё за ним
+            if (!h.IsAlive || h.CurrentProp == null || h.Stun != HiderPlayer.StunPhase.None) continue;
+            if (h.CurrentProp.tier > kickMaxTier) continue;   // средние и крупные таранятся, а не пинаются
+            float d = ZoneDistance(h.CurrentProp, zone, feet.y + kickZoneHeight, zoneRadius);
+            if (d < best) { best = d; victim = h; }
         }
-        if (victim == null || !victim.IsAlive || victim.CurrentProp == null || victim.Stun != HiderPlayer.StunPhase.None) return res;
+        if (victim == null) return res;
 
         res.hit = true;
-        Vector3 dir = new Vector3(forward.x, 0f, forward.z);
-        dir = dir.sqrMagnitude < 1e-4 ? kicker.transform.forward : dir.normalized;
+        Vector3 away = victim.BodyCenter - feet; away.y = 0f;
+        Vector3 dir = away.sqrMagnitude < 1e-4 ? bodyFwd : away.normalized;
         float f = KickFactor(victim.CurrentProp.tier);
         Vector3 launch = dir * kickSpeed * f + Vector3.up * kickLift * Mathf.Lerp(1f, f, 0.5f);
         Vector3 spin = Random.onUnitSphere * kickSpin;
         victim.BeginKicked(launch, spin, this);
         return res;
+    }
+
+    // Расстояние от центра зоны до ближайшей точки предмета; float.MaxValue, если предмет вне зоны (по радиусу или выше «колена»).
+    static float ZoneDistance(Prop prop, Vector3 zone, float maxY, float radius)
+    {
+        float best = float.MaxValue;
+        foreach (var c in prop.Colliders)
+        {
+            if (c == null || !c.enabled) continue;
+            Vector3 p = c.ClosestPoint(zone);
+            float d = Vector3.Distance(p, zone);
+            if (d <= radius && p.y <= maxY && d < best) best = d;
+        }
+        return best;
     }
 
     // --- Таран ---

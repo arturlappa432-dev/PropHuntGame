@@ -203,7 +203,7 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
         var auth = RamKickAuthority.Instance;
         Vector3 origin = cam != null && controlled ? cam.transform.position : EyePosition;
         Vector3 fwd = cam != null && controlled ? cam.transform.forward : Quaternion.Euler(pitch, yaw, 0) * Vector3.forward;
-        var res = auth.TryKick(this, origin, fwd);
+        var res = auth.TryKick(this);
         if (!res.fired) return;
         kickT = 0f;
         if (res.hit) CombatAudio.PlayAt(CombatAudio.Hit, origin + fwd, 1f, controlled);

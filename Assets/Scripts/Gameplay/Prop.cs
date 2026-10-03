@@ -11,6 +11,10 @@ public class Prop : MonoBehaviour
     static readonly int[] TierHp = { 20, 100, 140, 220 };
 
     public PropTier tier;
+    // Идентификатор модели (тип предмета). Пусто -> имя объекта (в сцене имя = имя определения: Can, Box, Bin...).
+    // Копируется при смене облика: нужен, чтобы отличить «ту же модель» от «того же тира».
+    public string modelId;
+    public string ModelId => string.IsNullOrEmpty(modelId) ? name : modelId;
     public float height = 0.3f;       // высота в метрах (для капсулы игрока)
     public float footRadius = 0.15f;  // радиус основания
 
@@ -76,6 +80,7 @@ public class Prop : MonoBehaviour
     public void CopyAppearanceFrom(Prop src)
     {
         tier = src.tier;
+        modelId = src.ModelId;
         height = src.height;
         footRadius = src.footRadius;
 
