@@ -379,7 +379,7 @@ public class HiderPlayer : MonoBehaviour
         if (Caught) return false;
         Hp = Mathf.Max(0, Hp - damage);
         hitFlashUntil = Time.time + 0.25f;
-        CombatAudio.PlayAt(CombatAudio.Hit, BodyCenter, 1f);
+        CombatAudio.PlayAt(CombatAudio.Hit, BodyCenter, 1f, controlled);
         return Hp <= 0;
     }
 
@@ -407,7 +407,7 @@ public class HiderPlayer : MonoBehaviour
         Vector3 center = BodyCenter;
         float size = Mathf.Max(BodyHeight, CurrentProp != null ? CurrentProp.footRadius * 2f : 0.2f);
         PuffEffect.Spawn(center, size, puffMaterial);
-        CombatAudio.PlayAt(CombatAudio.Puff, center, 1f);
+        CombatAudio.PlayAt(CombatAudio.Puff, center, 1f, controlled);
         if (CurrentProp != null) CurrentProp.gameObject.SetActive(false);   // исчезает мгновенно, без физики разрушения
         stickman.gameObject.SetActive(false);
         cc.enabled = false;

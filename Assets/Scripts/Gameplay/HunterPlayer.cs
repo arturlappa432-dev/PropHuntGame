@@ -153,7 +153,7 @@ public class HunterPlayer : MonoBehaviour
         var res = auth.TryFire(this, origin, fwd);
         if (!res.fired) return;
         lastFire = Time.time;
-        CombatAudio.PlayAt(CombatAudio.Shot, origin, 1f);
+        CombatAudio.PlayAt(CombatAudio.Shot, origin, 1f, controlled);
         StartCoroutine(Tracers(origin, res.pelletEnds));
         if (res.hit) LastShot = $"попадание: {res.damage} ур. с {res.distance:0.0} м{(res.caught ? ", ПОЙМАН" : "")}";
         else
@@ -167,7 +167,7 @@ public class HunterPlayer : MonoBehaviour
     void Stumble()
     {
         stumbleT = 0f;
-        CombatAudio.PlayAt(CombatAudio.Miss, transform.position + Vector3.up, 1f);
+        CombatAudio.PlayAt(CombatAudio.Miss, transform.position + Vector3.up, 1f, controlled);
     }
 
     float StumbleK => stumbleT < 0f ? 0f : Mathf.Sin(Mathf.PI * Mathf.Clamp01(stumbleT / stumbleDuration));

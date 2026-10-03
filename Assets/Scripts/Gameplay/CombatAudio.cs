@@ -40,12 +40,14 @@ public static class CombatAudio
     }
 
     // Трёхмерный звук в точке: слышен всем рядом, глохнет с расстоянием.
-    public static void PlayAt(AudioClip clip, Vector3 pos, float volume)
+    // local = звук исходит от самого слушателя (свой выстрел, своё попадание): точка источника совпадает с AudioListener,
+    // и 3D-панорама зависит от того, куда камера сместилась за кадр (при движении A/D стороны инвертировались), поэтому играем 2D.
+    public static void PlayAt(AudioClip clip, Vector3 pos, float volume, bool local = false)
     {
         var go = new GameObject("sfx_" + clip.name);
         go.transform.position = pos;
         var s = go.AddComponent<AudioSource>();
-        s.clip = clip; s.volume = volume; s.spatialBlend = 1f;
+        s.clip = clip; s.volume = volume; s.spatialBlend = local ? 0f : 1f;
         s.minDistance = 2f; s.maxDistance = 30f; s.rolloffMode = AudioRolloffMode.Linear;
         s.Play();
         Object.Destroy(go, clip.length + 0.1f);
