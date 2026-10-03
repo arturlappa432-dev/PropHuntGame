@@ -16,6 +16,7 @@ public static class CombatTestSetup
         if (gm == null) { Debug.LogError("Нет GameManager: сначала соберите карту (PropHunt/Build Supermarket Map)."); return; }
         var auth = gm.GetComponent<CombatAuthority>() ?? gm.AddComponent<CombatAuthority>();
         if (gm.GetComponent<DebugRoleSwitch>() == null) gm.AddComponent<DebugRoleSwitch>();
+        if (gm.GetComponent<BotSpawner>() == null) gm.AddComponent<BotSpawner>();   // боты-прячущиеся (bots.md)
 
         auth.hunterMaterial = Mat($"{Dir}/Hunter.mat", new Color(0.75f, 0.2f, 0.15f));
         auth.gunMaterial = Mat($"{Dir}/Shotgun.mat", new Color(0.12f, 0.12f, 0.13f));

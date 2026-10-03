@@ -498,6 +498,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -617,6 +618,8 @@ MonoBehaviour:
   height: 1.8
   stumbleDuration: 0.7
   NextShotTime: 0
+  NextKickTime: 0
+  KnockImmuneUntil: 0
   pivot: {fileID: 2130687102}
   gun: {fileID: 460585153}
   viewModel: {fileID: 422997896}
@@ -1853,6 +1856,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -2395,6 +2399,7 @@ GameObject:
   - component: {fileID: 235937204}
   - component: {fileID: 235937208}
   - component: {fileID: 235937207}
+  - component: {fileID: 235937209}
   m_Layer: 0
   m_Name: GameManager
   m_TagString: Untagged
@@ -2479,6 +2484,22 @@ MonoBehaviour:
   gunMaterial: {fileID: 2100000, guid: 71f7b8c58fa3b894790a247ce0563db2, type: 2}
   puffMaterial: {fileID: 2100000, guid: d299b5a22f59a6a43965bca2bc06af23, type: 2}
   hunterSpawn: {fileID: 1954779022}
+--- !u!114 &235937209
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 235937203}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f505f4ad2f2ecd84bbf313cdeeb9c055, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BotSpawner
+  count: 4
+  spawnCenter: {x: 0, y: 0.1, z: -4.5}
+  spawnSpread: 6
+  seed: 17
 --- !u!1 &240806983
 GameObject:
   m_ObjectHideFlags: 0
@@ -2729,6 +2750,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -2993,6 +3015,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 3
+  modelId: 
   height: 1.2
   footRadius: 0.3
   occupant: {fileID: 0}
@@ -3391,6 +3414,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -3724,6 +3748,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -3966,6 +3991,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -4097,6 +4123,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 3
+  modelId: 
   height: 0.9
   footRadius: 0.5
   occupant: {fileID: 0}
@@ -4355,6 +4382,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -4484,6 +4512,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -5674,6 +5703,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -6904,6 +6934,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -7394,6 +7425,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -8620,6 +8652,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -8927,6 +8960,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -9224,6 +9258,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -9436,6 +9471,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -9610,6 +9646,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -9866,6 +9903,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -11171,6 +11209,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -11503,6 +11542,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -11766,6 +11806,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -12782,6 +12823,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -13373,6 +13415,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -14731,6 +14774,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -14995,6 +15039,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -15686,6 +15731,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 3
+  modelId: 
   height: 1.2
   footRadius: 0.3
   occupant: {fileID: 0}
@@ -15924,6 +15970,9 @@ MonoBehaviour:
   jumpHeightMultiplier: 1.75
   minHidingJumpHeight: 2.05
   jumpWindup: 0.1
+  boostSpeedMult: 1.5
+  boostDuration: 3
+  boostRecharge: 15
 --- !u!143 &1481117763
 CharacterController:
   m_ObjectHideFlags: 0
@@ -17113,6 +17162,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.12
   footRadius: 0.045
   occupant: {fileID: 0}
@@ -17669,6 +17719,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -17933,6 +17984,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 2
+  modelId: 
   height: 0.7
   footRadius: 0.22500005
   occupant: {fileID: 0}
@@ -18063,6 +18115,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -18238,6 +18291,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -18500,6 +18554,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -18787,6 +18842,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -18917,6 +18973,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -19046,6 +19103,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -19287,6 +19345,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.22
   footRadius: 0.16000004
   occupant: {fileID: 0}
@@ -19549,6 +19608,9 @@ MonoBehaviour:
   jumpHeightMultiplier: 1.75
   minHidingJumpHeight: 2.05
   jumpWindup: 0.1
+  boostSpeedMult: 1.5
+  boostDuration: 3
+  boostRecharge: 15
 --- !u!143 &1869930182
 CharacterController:
   m_ObjectHideFlags: 0
@@ -20199,6 +20261,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 1
+  modelId: 
   height: 0.2
   footRadius: 0.15
   occupant: {fileID: 0}
@@ -21303,6 +21366,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}
@@ -21477,6 +21541,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Prop
   tier: 0
+  modelId: 
   height: 0.18
   footRadius: 0.07
   occupant: {fileID: 0}

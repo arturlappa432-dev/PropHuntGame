@@ -35,6 +35,12 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public float BoostFill { get; private set; } = 1f;   // 1 = полная шкала
     public bool Sliding => Boost == BoostPhase.Active;   // слайд: процедурное «прыг-скок» (movement-and-camera.md) на это время должно быть выключено
 
+    // Бот (HiderBot) подаёт тот же ввод, что и клавиатура: движение, прыжок, Z, E. Прицел для E — луч из глаз по yaw/pitch бота.
+    public BotInput botInput;
+    public enum DetectKind { Hit, NearMiss, Kick }
+    public event System.Action<DetectKind> Detected;   // реальное обнаружение: попадание, near-miss (свист), пинок; приближение охотника сюда не входит
+    public bool Busy => busy;
+
     public bool Caught { get; private set; }
     public bool IsAlive => !Caught;
     public Vector3 BodyCenter => Stun != StunPhase.None && CurrentProp != null ? CurrentProp.transform.position : transform.position + Vector3.up * BodyHeight * 0.5f;
@@ -114,16 +120,18 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             yaw += d.x;
             pitch = Mathf.Clamp(pitch - d.y, -80f, 80f);
         }
+        if (botInput != null) { yaw = botInput.yaw; pitch = Mathf.Clamp(botInput.pitch, -80f, 80f); }
         if (kb != null && kb.vKey.wasPressedThisFrame) thirdPerson = !thirdPerson;
 
         UpdateBoost();
-        if (kb != null && kb.zKey.wasPressedThisFrame) PressBoost();
+        if ((kb != null && kb.zKey.wasPressedThisFrame) || (botInput != null && botInput.TakeBoost())) PressBoost();
 
         if (!busy)
         {
             Move(kb);
             if (Sliding && CurrentProp != null) RamKickAuthority.Instance.TryRam(this);   // таран только во время ускорения
-            if (controlled) UpdateTarget();
+            if (controlled || botInput != null) UpdateTarget();
+            if (botInput != null && botInput.TakePossess() && (CurrentProp == null || MorphReady)) PressPossess();
             if (kb != null && kb.eKey.wasPressedThisFrame && MorphReady) { PressPossess(); eConsumed = true; }
             else if (kb != null && kb.eKey.wasPressedThisFrame && CurrentProp == null) PressPossess();
             if (kb != null && !kb.eKey.isPressed) eConsumed = false;
@@ -162,11 +170,13 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             if (kb.dKey.isPressed) input.x += 1;
             if (kb.aKey.isPressed) input.x -= 1;
         }
+        if (botInput != null) { input.x = botInput.move.x; input.z = botInput.move.y; }
         Vector3 move = look * input.normalized * walkSpeed * (Boosted ? boostMult : 1f) * (Sliding ? boostSpeedMult : 1f);
         slideMoving = Sliding && input.sqrMagnitude > 0.01f;
         bool grounded = cc.isGrounded;
         if (grounded && wasAirborne) Land(-vy);
-        if (grounded && windup < 0f && kb != null && kb.spaceKey.wasPressedThisFrame) windup = jumpWindup;
+        bool jumpPressed = (kb != null && kb.spaceKey.wasPressedThisFrame) || (botInput != null && botInput.TakeJump());
+        if (grounded && windup < 0f && jumpPressed) windup = jumpWindup;
         if (windup >= 0f)
         {
             windup -= Time.deltaTime;
@@ -355,7 +365,11 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     {
         Prop found = null;
         var auth = PossessionAuthority.Instance;
-        var hits = Physics.RaycastAll(cam.transform.position, cam.transform.forward, 30f, ~0, QueryTriggerInteraction.Ignore);
+        // Человек целится камерой; бот без камеры — лучом из глаз по своему yaw/pitch (те же правила, тот же луч).
+        bool fromCam = controlled && cam != null;
+        Vector3 rayO = fromCam ? cam.transform.position : EyePosition;
+        Vector3 rayD = fromCam ? cam.transform.forward : Quaternion.Euler(pitch, yaw, 0f) * Vector3.forward;
+        var hits = Physics.RaycastAll(rayO, rayD, 30f, ~0, QueryTriggerInteraction.Ignore);
         System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
         foreach (var h in hits)
         {
@@ -367,9 +381,10 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         }
         if (found != Target)
         {
-            if (Target != null) Target.SetHighlight(false, outlineMaterial);
+            bool show = botInput == null;   // подсветка рисуется только человеку: у бота обводка выдавала бы его цель игроку
+            if (Target != null && show) Target.SetHighlight(false, outlineMaterial);
             Target = found;
-            if (Target != null) Target.SetHighlight(true, outlineMaterial);
+            if (Target != null && show) Target.SetHighlight(true, outlineMaterial);
         }
     }
 
@@ -514,6 +529,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public void BeginKicked(Vector3 launch, Vector3 spin, RamKickAuthority a)
     {
         if (Caught || CurrentProp == null || Stun != StunPhase.None) return;
+        Detected?.Invoke(DetectKind.Kick);
         stunCo = StartCoroutine(StunRoutine(launch, spin, a));
     }
 
@@ -645,6 +661,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         if (hpBar == null) hpBar = HpBar.Attach(this);
         hpBar.Show(Hp, MaxHp);
         CombatAudio.PlayAt(CombatAudio.Hit, BodyCenter, 1f, controlled);
+        Detected?.Invoke(DetectKind.Hit);
         return Hp <= 0;
     }
 
@@ -654,6 +671,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         if (Caught) return;
         boostUntil = Time.time + boostSeconds;
         boostMult = boostMultiplier;
+        Detected?.Invoke(DetectKind.NearMiss);
         if (controlled && sfx != null) sfx.PlayOneShot(CombatAudio.Whistle, CombatAudio.WhistleVolume(hunterDistance));
     }
 
@@ -696,7 +714,8 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         }
         else yield return new WaitForSeconds(1.4f);
 
-        if (CombatAuthority.Instance != null) CombatAuthority.Instance.SpawnHunter(controlled, cam);
+        // Бот-охотник отложен (bots.md): пойманный бот просто выбывает, охотника из него не создаём.
+        if (botInput == null && CombatAuthority.Instance != null) CombatAuthority.Instance.SpawnHunter(controlled, cam);
         Destroy(gameObject);
     }
 
