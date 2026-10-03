@@ -4,7 +4,7 @@ using UnityEngine.InputSystem;
 
 // Охотник (стикмен 1,8 м) с дробовиком. Ввод и камера клиентские; выстрел решает CombatAuthority.
 [RequireComponent(typeof(CharacterController))]
-public class HunterPlayer : MonoBehaviour
+public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
 {
     public static readonly List<HunterPlayer> All = new List<HunterPlayer>();
 
@@ -36,8 +36,16 @@ public class HunterPlayer : MonoBehaviour
 
     static int OwnBodyLayer => LayerMask.NameToLayer("OwnBody");
 
-    void OnEnable() { All.Add(this); }
-    void OnDisable() { All.Remove(this); }
+    void OnEnable() { All.Add(this); OwnBodyCulling.Register(this); }
+    void OnDisable() { All.Remove(this); OwnBodyCulling.Unregister(this); }
+
+    // Своё тело (капсула и дробовик на нём) скрывается только от камеры владельца; во время ragdoll камера на голове, тело-капсула неактивна.
+    public Camera ViewCamera => controlled ? cam : null;
+    public bool HideOwnBody => controlled && !Knocked && pivot != null;
+    public void CollectOwnRenderers(List<Renderer> buffer) { pivot.GetComponentsInChildren<Renderer>(false, buffer); }
+
+    // Исходный масштаб дробовика на теле (из Create): при возврате из руки ragdoll берётся он, а не производная от масштаба руки.
+    public Vector3 GunHomeScale { get; private set; }
 
     // Рантайм-сборка: капсула-стикмен, CharacterController, дробовик на теле и «вьюмодель» для первого лица.
     public static HunterPlayer Create(Vector3 pos, float yawDeg, Camera cam, bool controlled, Material bodyMat, Material gunMat)
@@ -74,6 +82,7 @@ public class HunterPlayer : MonoBehaviour
         if (gunMat != null) vm.GetComponent<Renderer>().sharedMaterial = gunMat;
 
         h.pivot = pv; h.gun = g.transform; h.viewModel = vm;
+        h.GunHomeScale = g.transform.localScale;
         h.SetControlled(controlled);
         return h;
     }
@@ -90,6 +99,7 @@ public class HunterPlayer : MonoBehaviour
         sfx.spatialBlend = 0f;
         tracerMat = new Material(Shader.Find("Sprites/Default"));
         yaw = transform.eulerAngles.y;
+        if (GunHomeScale == Vector3.zero && gun != null) GunHomeScale = gun.localScale;   // охотник из сцены, не из Create
         ApplyControlled();
     }
 
@@ -109,12 +119,10 @@ public class HunterPlayer : MonoBehaviour
         if (on) { Cursor.lockState = CursorLockMode.Locked; yaw = transform.eulerAngles.y; pitch = 0f; }
     }
 
-    // Своё тело не рисуется собственной камерой (слой OwnBody), вьюмодель только у управляемого.
+    // Вьюмодель только у управляемого (скрытие своего тела от своей камеры: OwnBodyCulling).
     void ApplyControlled()
     {
         if (pivot == null) return;
-        int layer = controlled && OwnBodyLayer >= 0 ? OwnBodyLayer : 0;
-        foreach (var t in pivot.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
         viewModel.SetActive(controlled && !Knocked);
     }
 
@@ -288,15 +296,12 @@ public class HunterPlayer : MonoBehaviour
         if (Knocked)
         {
             if (ragdoll.TryGetCameraPose(out var p, out var r)) cam.transform.SetPositionAndRotation(p, r);
-            cam.cullingMask = ~0;
             return;
         }
         float dip = StumbleK * -10f;   // камера кивает вниз при спотыкании
         float recoil = Mathf.Clamp01(1f - (Time.time - lastFire) / 0.15f) * -4f;
         Quaternion rot = Quaternion.Euler(pitch + dip + recoil, yaw, StumbleK * Mathf.Sin(stumbleT * 22f) * 3f);
         cam.transform.SetPositionAndRotation(EyePosition + Vector3.up * -0.12f * StumbleK, rot);
-        int own = OwnBodyLayer;
-        if (own >= 0) cam.cullingMask = ~(1 << own);
 
         // Вьюмодель с «перезарядкой»: отдача -> помпа за fireInterval. Цифрового таймера нет.
         float interval = CombatAuthority.Instance != null ? CombatAuthority.Instance.fireInterval : 1.2f;

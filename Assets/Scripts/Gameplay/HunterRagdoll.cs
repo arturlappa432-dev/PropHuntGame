@@ -154,6 +154,7 @@ public class HunterRagdoll : MonoBehaviour
         {
             gun.SetParent(gunOldParent, false);
             gun.localPosition = gunOldPos; gun.localRotation = gunOldRot;
+            gun.localScale = hunter.GunHomeScale;   // абсолютный исходный масштаб: SetParent(.., true) в руку искажал localScale, и он копился
         }
         hunter.EndKnock(target, rootRot.eulerAngles.y, Time.time + auth.knockImmunity);
         Destroy(gameObject);

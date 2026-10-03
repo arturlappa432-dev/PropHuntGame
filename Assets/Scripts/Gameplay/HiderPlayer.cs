@@ -6,7 +6,7 @@ using UnityEngine.InputSystem;
 // Локальный прячущийся: стикмен до вселения, потом предмет. Ввод и камера клиентские,
 // решение «можно ли вселиться» принимает PossessionAuthority.
 [RequireComponent(typeof(CharacterController))]
-public class HiderPlayer : MonoBehaviour
+public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
 {
     public static readonly List<HiderPlayer> All = new List<HiderPlayer>();
 
@@ -67,8 +67,13 @@ public class HiderPlayer : MonoBehaviour
     AudioSource sfx;
     AudioClip landClip;
 
-    void OnEnable() { All.Add(this); }
-    void OnDisable() { All.Remove(this); }
+    void OnEnable() { All.Add(this); OwnBodyCulling.Register(this); }
+    void OnDisable() { All.Remove(this); OwnBodyCulling.Unregister(this); }
+
+    // Своё тело от первого лица скрывается только от камеры владельца (OwnBodyCulling), слой для этого не используется.
+    public Camera ViewCamera => controlled ? cam : null;
+    public bool HideOwnBody => controlled && !thirdPerson && !Caught && CurrentProp != null;
+    public void CollectOwnRenderers(List<Renderer> buffer) { CurrentProp.GetComponentsInChildren<Renderer>(false, buffer); }
 
     void Awake() { cc = GetComponent<CharacterController>(); cc.skinWidth = 0.01f; }   // дефолт 0.08 даёт видимый зазор
 
@@ -487,9 +492,6 @@ public class HiderPlayer : MonoBehaviour
         camKickVel += (-camKick * 180f - camKickVel * 18f) * Time.deltaTime;
         camKick += camKickVel * Time.deltaTime;
         cam.transform.SetPositionAndRotation(eye - rot * Vector3.forward * ClampCamDistance(eye, rot, camDist) + Vector3.up * camKick * BodyHeight, rot);
-        // от первого лица собственное тело не рисуется, от третьего (V) рисуется
-        int own = OwnBodyLayer;
-        if (own >= 0) cam.cullingMask = thirdPerson ? ~0 : ~(1 << own);
     }
 
     public void SetControlled(bool on)
@@ -649,7 +651,6 @@ public class HiderPlayer : MonoBehaviour
 
         if (controlled && cam != null)
         {
-            cam.cullingMask = ~0;
             cam.transform.SetParent(null, true);
             Vector3 p0 = cam.transform.position; Quaternion r0 = cam.transform.rotation;
             const float fly = 1.0f, hold = 0.4f;
