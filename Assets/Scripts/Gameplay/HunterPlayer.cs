@@ -75,7 +75,7 @@ public class HunterPlayer : MonoBehaviour
 
     void OnDestroy() { if (viewModel != null) Destroy(viewModel); }
 
-    void Awake() { cc = GetComponent<CharacterController>(); }
+    void Awake() { cc = GetComponent<CharacterController>(); SetupPushImmunity(); }
 
     void Start()
     {
@@ -125,6 +125,20 @@ public class HunterPlayer : MonoBehaviour
         Move(kb);
         if (mouse != null && mouse.leftButton.wasPressedThisFrame) Fire();
         UpdateStumble();
+    }
+
+    // Коллайдер предмета на теле прячущегося (слой OwnBody; бокс/меш с собственной ориентацией) не должен выталкивать охотника:
+    // CharacterController охотника при Move выдавливается из любого пересекающего его коллайдера (Physics.IgnoreCollision на
+    // это не влияет, замер: охотника сдвигало до 6 м). Корень охотника на слое Hunter, пара Hunter-OwnBody не сталкивается.
+    // Лучи выстрела и прицела слои не фильтруют, по предмету попадание работает как раньше. Капсулы CC друг друга не толкают
+    // (замер), прячущегося охотник по-прежнему не пропускает. Толкать охотника будет только таран (ram-kick.md), отдельным кодом.
+    static int HunterLayer => LayerMask.NameToLayer("Hunter");
+    void SetupPushImmunity()
+    {
+        int hl = HunterLayer, own = OwnBodyLayer;
+        if (hl < 0 || own < 0) { Debug.LogWarning("Слой Hunter/OwnBody не создан: охотника могут толкать (PropHunt/Build Supermarket Map создаёт слои)"); return; }
+        gameObject.layer = hl;
+        Physics.IgnoreLayerCollision(hl, own, true);
     }
 
     void Move(Keyboard kb)

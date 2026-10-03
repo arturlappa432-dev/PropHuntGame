@@ -39,6 +39,7 @@ public static class GameplayTestSetup
     public static void Create(Vector3 playerPos)
     {
         EnsureLayer("OwnBody");
+        EnsureLayer("Hunter");   // корень охотника: не сталкивается с OwnBody, см. HunterPlayer.SetupPushImmunity
         Directory.CreateDirectory(PropMatDir);
         var mats = new Material[Colors.Length];
         for (int i = 0; i < mats.Length; i++) mats[i] = Mat($"{PropMatDir}/Prop_{i}.mat", Colors[i]);
