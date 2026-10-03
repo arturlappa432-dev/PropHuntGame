@@ -46,7 +46,9 @@ public class RamKickAuthority : MonoBehaviour
     public float flightMaxTime = 6f;                // только страховка от застрявшей физики; обычно фазу 1 завершает проверка «осел»
     public float settleSpeed = 0.15f;               // «осел»: линейная скорость ниже, м/с
     public float settleAngular = 0.6f;              // и угловая ниже, рад/с
-    public float settleHold = 0.25f;                // удерживается столько секунд при контакте с опорой
+    public float roundAngularDamping = 12f;         // угловое сопротивление после касания земли для круглых (капсула/сфера/цилиндр), иначе катятся долго
+    public float roundFriction = 1.2f;              // трение круглых предметов
+    public float settleHold = 0.25f;               // удерживается столько секунд при контакте с опорой
     public float minOutDuration = 1f;               // «в отключке» не короче, даже если полёт занял почти весь таймер
     public float realignDuration = 0.4f;            // balance/ram-kick: ~0,3-0,5 с
 

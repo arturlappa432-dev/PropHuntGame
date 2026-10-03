@@ -72,6 +72,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
 
     // Своё тело от первого лица скрывается только от камеры владельца (OwnBodyCulling), слой для этого не используется.
     public Camera ViewCamera => controlled ? cam : null;
+    public bool ThirdPerson => thirdPerson;
     public bool HideOwnBody => controlled && !thirdPerson && !Caught && CurrentProp != null;
     public void CollectOwnRenderers(List<Renderer> buffer) { CurrentProp.GetComponentsInChildren<Renderer>(false, buffer); }
 
@@ -533,6 +534,10 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         propRb.linearDamping = 0.1f;
         propRb.maxAngularVelocity = 20f;
         var mat = new PhysicsMaterial { bounciness = 0.35f, dynamicFriction = 0.5f, staticFriction = 0.6f, bounceCombine = PhysicsMaterialCombine.Maximum };
+        bool round = false;
+        foreach (var c in prop.Colliders)
+            if (c is CapsuleCollider || c is SphereCollider || prop.ModelId == "Can" || prop.ModelId == "Basket") round = true;
+        if (round) { mat.dynamicFriction = a.roundFriction; mat.staticFriction = a.roundFriction; mat.frictionCombine = PhysicsMaterialCombine.Maximum; }
         foreach (var c in prop.Colliders) if (c != null) c.material = mat;
         propRb.AddForce(launch * propRb.mass, ForceMode.Impulse);
         propRb.AddTorque(spin, ForceMode.VelocityChange);
@@ -548,7 +553,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             t += Time.deltaTime;
             if (prop.transform.position.y < -2f || t >= a.flightMaxTime) { forced = true; break; }
             // PhysX не имеет сопротивления качению: после касания земли добавляем торможение, иначе банка/корзина катятся десятки метров
-            if (t > 0.4f && probe.Supported()) { propRb.linearDamping = 1.5f; propRb.angularDamping = 3f; }
+            if (t > 0.4f && probe.Supported()) { propRb.linearDamping = 1.5f; propRb.angularDamping = round ? a.roundAngularDamping : 3f; }
             bool slow = propRb.linearVelocity.sqrMagnitude < a.settleSpeed * a.settleSpeed && propRb.angularVelocity.sqrMagnitude < a.settleAngular * a.settleAngular;
             if (t > 0.2f && probe.Supported() && (slow || propRb.IsSleeping())) { calm += Time.deltaTime; if (calm >= a.settleHold) break; }
             else calm = 0f;

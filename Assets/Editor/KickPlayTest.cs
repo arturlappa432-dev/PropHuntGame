@@ -190,6 +190,29 @@ public static class KickPlayTest
         var alphas = bar.GetComponentsInChildren<SpriteRenderer>().Select(s => s.color.a).ToArray();
         L($"T5 альфа спрайтов: {string.Join(",", alphas.Select(a => a.ToString("F2")))}");
 
+        // --- T6: бар у самого прячущегося: виден от третьего лица, не виден от первого ---
+        var me = HiderPlayer.All.Find(h => h.controlled);
+        if (me != null && me.CurrentProp != null)
+        {
+            var tp = typeof(HiderPlayer).GetField("thirdPerson", BindingFlags.NonPublic | BindingFlags.Instance);
+            SetHp(me, me.MaxHp);
+            tp.SetValue(me, true);
+            yield return Wait(0.5f);
+            me.ApplyHit(me.MaxHp / 4);
+            yield return Wait(0.3f);
+            var myBar = Object.FindObjectsByType<HpBar>(FindObjectsSortMode.None).First(b => b.GetComponentInParent<Transform>() != null && typeof(HpBar).GetField("owner", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(b) == me);
+            float aTp = myBar.GetComponentsInChildren<SpriteRenderer>().Max(s => s.color.a);
+            L($"T6 свой бар, третье лицо: Visible={myBar.Visible} Fraction={myBar.Fraction:F2} альфа={aTp:F2} (ожидаем >0), HideOwnBody={me.HideOwnBody}");
+            ScreenCapture.CaptureScreenshot("Assets/Screenshots/hpbar_own_thirdperson.png");
+            yield return Wait(0.5f);
+            tp.SetValue(me, false);
+            me.ApplyHit(1);
+            yield return Wait(0.3f);
+            float aFp = myBar.GetComponentsInChildren<SpriteRenderer>().Max(s => s.color.a);
+            L($"T6 свой бар, первое лицо: альфа={aFp:F2} (ожидаем 0)");
+        }
+        else L("T6 пропущен: нет управляемого прячущегося с предметом");
+
         // Скриншот бара глазами охотника
         DebugRoleSwitch.Swap();
         yield return Wait(0.3f);

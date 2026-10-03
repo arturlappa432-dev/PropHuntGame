@@ -64,8 +64,10 @@ public class HpBar : MonoBehaviour
     {
         if (owner == null) { Destroy(gameObject); return; }
         float remain = visibleUntil - Time.time;
-        // себе бар не показываем: своё HP видно в HUD
-        float a = owner.controlled || owner.Caught ? 0f : Mathf.Clamp01(remain / fadeDuration);
+        // виден всем, в том числе владельцу от третьего лица (бар не часть тела, OwnBodyCulling его не трогает);
+        // от первого лица владельца бар не рисуем: он оказался бы у самой камеры
+        bool hideForOwner = owner.controlled && !owner.ThirdPerson;
+        float a = hideForOwner || owner.Caught ? 0f : Mathf.Clamp01(remain / fadeDuration);
         SetAlpha(a);
         if (a <= 0f) return;
 
