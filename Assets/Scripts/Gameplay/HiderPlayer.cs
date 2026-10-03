@@ -26,6 +26,15 @@ public class HiderPlayer : MonoBehaviour
     public float minHidingJumpHeight = 2.05f;   // абсолютный минимум высоты прыжка: верхняя полка 1,82 м (измерено в сцене) + ~12%
     public float jumpWindup = 0.1f;             // приседание перед отрывом, сек
 
+    public float boostSpeedMult = 1.5f;   // boost.md: ×1,5 (тестировать)
+    public float boostDuration = 3f;      // сек ускорения = полная шкала
+    public float boostRecharge = 15f;     // сек восстановления шкалы после конца ускорения
+
+    public enum BoostPhase { Ready, Active, Recharging }
+    public BoostPhase Boost { get; private set; } = BoostPhase.Ready;
+    public float BoostFill { get; private set; } = 1f;   // 1 = полная шкала
+    public bool Sliding => Boost == BoostPhase.Active;   // слайд: процедурное «прыг-скок» (movement-and-camera.md) на это время должно быть выключено
+
     public bool Caught { get; private set; }
     public bool IsAlive => !Caught;
     public Vector3 BodyCenter => transform.position + Vector3.up * BodyHeight * 0.5f;
@@ -98,6 +107,9 @@ public class HiderPlayer : MonoBehaviour
         }
         if (kb != null && kb.vKey.wasPressedThisFrame) thirdPerson = !thirdPerson;
 
+        UpdateBoost();
+        if (kb != null && kb.zKey.wasPressedThisFrame) PressBoost();
+
         if (!busy)
         {
             Move(kb);
@@ -140,7 +152,8 @@ public class HiderPlayer : MonoBehaviour
             if (kb.dKey.isPressed) input.x += 1;
             if (kb.aKey.isPressed) input.x -= 1;
         }
-        Vector3 move = look * input.normalized * walkSpeed * (Boosted ? boostMult : 1f);
+        Vector3 move = look * input.normalized * walkSpeed * (Boosted ? boostMult : 1f) * (Sliding ? boostSpeedMult : 1f);
+        slideMoving = Sliding && input.sqrMagnitude > 0.01f;
         bool grounded = cc.isGrounded;
         if (grounded && wasAirborne) Land(-vy);
         if (grounded && windup < 0f && kb != null && kb.spaceKey.wasPressedThisFrame) windup = jumpWindup;
@@ -159,6 +172,117 @@ public class HiderPlayer : MonoBehaviour
         move.y = vy;
         cc.Move(move * Time.deltaTime);
         wasAirborne = !cc.isGrounded;
+    }
+
+    // --- Ускорение Z (boost.md): одно нажатие, только при полной шкале, без звука активации ---
+
+    bool slideMoving;
+    ParticleSystem dust;
+
+    // Нажатие Z. Включается только в облике предмета и только при полной шкале.
+    public void PressBoost()
+    {
+        if (Caught || busy || CurrentProp == null || Boost != BoostPhase.Ready) return;
+        Boost = BoostPhase.Active;
+        BoostFill = 1f;
+    }
+
+    void UpdateBoost()
+    {
+        switch (Boost)
+        {
+            case BoostPhase.Active:
+                BoostFill = Mathf.Max(0f, BoostFill - Time.deltaTime / boostDuration);
+                if (BoostFill <= 0f) Boost = BoostPhase.Recharging;
+                break;
+            case BoostPhase.Recharging:
+                BoostFill = Mathf.Min(1f, BoostFill + Time.deltaTime / boostRecharge);
+                if (BoostFill >= 1f) Boost = BoostPhase.Ready;
+                break;
+        }
+        UpdateDust();
+    }
+
+    // Шлейф пыли: 2D-спрайты (billboard) у основания предмета, только пока слайд и предмет реально едет.
+    // Частицы живут в мировых координатах, поэтому остаются позади и видны всем, не только владельцу.
+    void UpdateDust()
+    {
+        if (dust == null)
+        {
+            if (!Sliding || puffMaterial == null) return;
+            var go = new GameObject("BoostDust");
+            go.transform.SetParent(transform, false);
+            go.transform.localPosition = Vector3.up * 0.03f;
+            dust = go.AddComponent<ParticleSystem>();
+            dust.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            var main = dust.main;
+            main.loop = true; main.playOnAwake = false;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.startLifetime = 0.5f;
+            main.startSpeed = 0.15f;
+            main.startColor = new Color(0.85f, 0.82f, 0.75f, 0.7f);
+            main.gravityModifier = -0.05f;
+            var sh = dust.shape; sh.shapeType = ParticleSystemShapeType.Box; sh.scale = new Vector3(0.2f, 0.02f, 0.2f);
+            var col = dust.colorOverLifetime; col.enabled = true;
+            var g = new Gradient();
+            g.SetKeys(new[] { new GradientColorKey(Color.white, 0), new GradientColorKey(Color.white, 1) },
+                      new[] { new GradientAlphaKey(0.7f, 0), new GradientAlphaKey(0f, 1) });
+            col.color = g;
+            var sz = dust.sizeOverLifetime; sz.enabled = true;
+            sz.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.EaseInOut(0, 0.5f, 1, 1.5f));
+            go.GetComponent<ParticleSystemRenderer>().sharedMaterial = puffMaterial;
+            go.layer = gameObject.layer;
+        }
+        float size = Mathf.Max(BodyHeight, CurrentProp != null ? CurrentProp.footRadius * 2f : 0.2f);
+        var m = dust.main;
+        m.startSize = new ParticleSystem.MinMaxCurve(0.35f * size + 0.05f, 0.7f * size + 0.1f);
+        var s = dust.shape; s.scale = new Vector3(Mathf.Max(0.1f, size * 0.5f), 0.02f, Mathf.Max(0.1f, size * 0.5f));
+        var em = dust.emission; em.rateOverTime = slideMoving ? 30f : 0f;
+        if (slideMoving && !dust.isPlaying) dust.Play();
+    }
+
+    // Кольцевая шкала: сегментные дуги, повёрнутые вокруг центра иконки.
+    void DrawBoostHud()
+    {
+        const float r = 34f, seg = 3f, thick = 7f;
+        const int n = 72;
+        var c = new Vector2(Screen.width - 70f, Screen.height - 70f);
+        Color fillCol = Boost == BoostPhase.Ready ? new Color(0.35f, 0.9f, 0.4f) : Boost == BoostPhase.Active ? new Color(1f, 0.7f, 0.2f) : new Color(0.45f, 0.65f, 1f);
+        var oldMatrix = GUI.matrix;
+        for (int i = 0; i < n; i++)
+        {
+            float a = i * 360f / n;
+            GUI.matrix = oldMatrix;
+            GUIUtility.RotateAroundPivot(a, c);
+            GUI.color = (i + 0.5f) / n <= BoostFill ? fillCol : new Color(1f, 1f, 1f, 0.18f);
+            GUI.DrawTexture(new Rect(c.x - seg * 0.5f, c.y - r - thick * 0.5f, seg, thick), Texture2D.whiteTexture);
+        }
+        GUI.matrix = oldMatrix;
+        GUI.color = new Color(0f, 0f, 0f, 0.55f);
+        float ir = 24f;
+        GUI.DrawTexture(new Rect(c.x - ir, c.y - ir, ir * 2f, ir * 2f), CircleTex);   // круглая иконка
+        GUI.color = Color.white;
+        var st = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+        GUI.Label(new Rect(c.x - ir, c.y - ir, ir * 2f, ir * 2f), "Z", st);
+    }
+
+    static Texture2D circleTex;
+    static Texture2D CircleTex
+    {
+        get
+        {
+            if (circleTex != null) return circleTex;
+            const int s = 64;
+            circleTex = new Texture2D(s, s, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            for (int y = 0; y < s; y++)
+                for (int x = 0; x < s; x++)
+                {
+                    float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(s / 2f, s / 2f));
+                    circleTex.SetPixel(x, y, new Color(1, 1, 1, Mathf.Clamp01(s / 2f - d)));
+                }
+            circleTex.Apply();
+            return circleTex;
+        }
     }
 
     // Приземление: звук (громче от скорости падения), приседание и лёгкий толчок камеры.
@@ -489,6 +613,8 @@ public class HiderPlayer : MonoBehaviour
         GUI.Label(new Rect(12, 8, 900, 28), $"{phase}   HP: {Hp}/{MaxHp}{cdText}{(Boosted ? "   БУСТ" : "")}", style);
         if (Target != null) GUI.Label(new Rect(Screen.width / 2f - 60, Screen.height / 2f + 16, 200, 26), "[E] вселиться", style);
         if (Toast.Length > 0) GUI.Label(new Rect(Screen.width / 2f - 100, Screen.height / 2f + 44, 400, 26), Toast, style);
+        GUI.color = Color.white;
+        if (CurrentProp != null) DrawBoostHud();
         GUI.color = Color.white;
         GUI.DrawTexture(new Rect(Screen.width / 2f - 2, Screen.height / 2f - 2, 4, 4), Texture2D.whiteTexture);
     }
