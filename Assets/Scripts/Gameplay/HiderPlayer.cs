@@ -441,11 +441,30 @@ public class HiderPlayer : MonoBehaviour
     {
         if (dist <= 0.01f) return dist;
         Vector3 back = rot * Vector3.back;
-        var hits = Physics.SphereCastAll(eye, CamRadius, back, dist, ~0, QueryTriggerInteraction.Ignore);
+
+        // Вплотную к стене SphereCast не видит коллайдер, в котором сфера уже стартует (distance = 0).
+        // Поэтому сначала ищем ближайшую поверхность вокруг точки обзора и сжимаем радиус каста под неё.
+        float radius = CamRadius;
+        foreach (var c in Physics.OverlapSphere(eye, CamRadius, ~0, QueryTriggerInteraction.Ignore))
+        {
+            if (c.transform.IsChildOf(transform)) continue;
+            if (c.GetComponentInParent<HiderPlayer>() == this) continue;
+            float d = Vector3.Distance(eye, c.ClosestPoint(eye));
+            if (d <= 0.001f) return 0f;   // глаз внутри геометрии: камера остаётся на глазах
+            radius = Mathf.Min(radius, d * 0.9f);
+        }
+
+        var hits = Physics.SphereCastAll(eye, radius, back, dist, ~0, QueryTriggerInteraction.Ignore);
         float best = dist;
         foreach (var h in hits)
         {
-            if (h.distance <= 0f) continue;   // сфера стартует внутри коллайдера: такой попадание не даёт расстояния
+            if (h.distance <= 0f) continue;
+            if (h.collider.GetComponentInParent<HiderPlayer>() == this) continue;
+            best = Mathf.Min(best, h.distance - CamMargin);
+        }
+        // страховка: тонкий луч по оси, на случай если каст сферой стартует на стене
+        foreach (var h in Physics.RaycastAll(eye, back, dist, ~0, QueryTriggerInteraction.Ignore))
+        {
             if (h.collider.GetComponentInParent<HiderPlayer>() == this) continue;
             best = Mathf.Min(best, h.distance - CamMargin);
         }
