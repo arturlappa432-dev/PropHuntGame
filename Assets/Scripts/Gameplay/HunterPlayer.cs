@@ -161,6 +161,9 @@ public class HunterPlayer : MonoBehaviour
             LastShot = res.nearMisses > 0 ? $"промах (рядом свистнуло: {res.nearMisses})" : "промах";
             Stumble();
         }
+#if UNITY_EDITOR
+        Debug.Log($"[hunter shot] {LastShot}");   // только консоль редактора: охотник не должен видеть near-miss (hunter-combat.md)
+#endif
     }
 
     // Телл промаха: звук + спотыкание (видно прячущимся поблизости). Без штрафа к перезарядке.
@@ -230,7 +233,6 @@ public class HunterPlayer : MonoBehaviour
         var style = new GUIStyle(GUI.skin.label) { fontSize = 16, normal = { textColor = Color.white } };
         string phase = IsBlocked ? $"Подготовка: охотник заблокирован ({RoundState.Instance.PrepRemaining:0} с)" : "Охота";
         GUI.Label(new Rect(12, 8, 900, 28), $"ОХОТНИК   {phase}", style);
-        if (LastShot.Length > 0) GUI.Label(new Rect(12, 34, 900, 28), $"[отладка] {LastShot}", style);
         GUI.color = Color.white;
         GUI.DrawTexture(new Rect(Screen.width / 2f - 2, Screen.height / 2f - 2, 4, 4), Texture2D.whiteTexture);
     }

@@ -358,7 +358,7 @@ public class HiderPlayer : MonoBehaviour
         // пружинный толчок камеры при приземлении
         camKickVel += (-camKick * 180f - camKickVel * 18f) * Time.deltaTime;
         camKick += camKickVel * Time.deltaTime;
-        cam.transform.SetPositionAndRotation(eye - rot * Vector3.forward * camDist + Vector3.up * camKick * BodyHeight, rot);
+        cam.transform.SetPositionAndRotation(eye - rot * Vector3.forward * ClampCamDistance(eye, rot, camDist) + Vector3.up * camKick * BodyHeight, rot);
         // от первого лица собственное тело не рисуется, от третьего (V) рисуется
         int own = OwnBodyLayer;
         if (own >= 0) cam.cullingMask = thirdPerson ? ~0 : ~(1 << own);
@@ -432,6 +432,24 @@ public class HiderPlayer : MonoBehaviour
 
         if (CombatAuthority.Instance != null) CombatAuthority.Instance.SpawnHunter(controlled, cam);
         Destroy(gameObject);
+    }
+
+    // Камера от третьего лица не заходит в стены: SphereCast от точки обзора назад к желаемой позиции,
+    // при препятствии (кроме собственного тела) камера подтягивается к игроку.
+    const float CamRadius = 0.2f, CamMargin = 0.05f;
+    float ClampCamDistance(Vector3 eye, Quaternion rot, float dist)
+    {
+        if (dist <= 0.01f) return dist;
+        Vector3 back = rot * Vector3.back;
+        var hits = Physics.SphereCastAll(eye, CamRadius, back, dist, ~0, QueryTriggerInteraction.Ignore);
+        float best = dist;
+        foreach (var h in hits)
+        {
+            if (h.distance <= 0f) continue;   // сфера стартует внутри коллайдера: такой попадание не даёт расстояния
+            if (h.collider.GetComponentInParent<HiderPlayer>() == this) continue;
+            best = Mathf.Min(best, h.distance - CamMargin);
+        }
+        return Mathf.Max(0f, best);
     }
 
     void ShowToast(string s) { Toast = s; toastUntil = Time.time + 1.5f; }
