@@ -493,7 +493,7 @@ public static class BotPlayTest
     public static void StartScenario(string name)
     {
         log.Clear();
-        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : null;
+        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : name == "group" ? MainGroup() : name == "ram" ? MainMorphRam() : name == "new" ? MainNew() : name == "rg" ? MainRG() : null;
         if (run != null) EditorApplication.update += Tick;
     }
 
@@ -610,6 +610,111 @@ public static class BotPlayTest
         cam.targetTexture = null;
         Object.Destroy(rt); Object.Destroy(camGo); Object.Destroy(root); Object.Destroy(tex);
         L($"   след сверху: Assets/Screenshots/{file}.png (красный — земля, синий — воздух)");
+    }
+
+    // Групповой побег мелких: все боты Snack, одновременное обнаружение, охотник идёт за первым; через 25 с — где кто затаился.
+    // Ищем: боты друг на друге, затаился на виду на голом полу, неудачные переходы на полку.
+    static IEnumerator MainGroup()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        for (int round = 1; round <= 2; round++)
+        {
+            int k = 0;
+            foreach (var b in bots)
+            {
+                var sample = FreeModel("Snack");
+                if (sample != null) Morph(b.Hider, sample);
+                var p = new Vector3(-2.5f + k * 0.9f, 0.05f, -3.1f); k++;
+                if (NavMesh.SamplePosition(p, out var nh, 1f, HumanoidFilter)) Teleport(b.Hider, nh.position);
+                b.Diag = null;
+            }
+            PlaceHunter(new Vector3(-6f, 0.05f, -3.1f), bots[0].Hider.BodyCenter);
+            yield return Wait(0.5f);
+            var f0 = bots.Select(b => b.ShelfJumpsFail).ToList();
+            var o0 = bots.Select(b => b.ShelfJumpsOk).ToList();
+            foreach (var b in bots) { b.Trail.Clear(); b.Hider.OnNearMiss(4f); }
+            float t0 = Time.time; int lastF = -1;
+            while (Time.time - t0 < 25f)
+            {
+                if (Time.frameCount != lastF && Time.time - t0 < 8f) { lastF = Time.frameCount; ChaseStep(bots[0].Hider); }
+                yield return null;
+            }
+            L($"group раунд {round}: через 25 с");
+            for (int i = 0; i < bots.Count; i++)
+            {
+                var b = bots[i]; var h = b.Hider; var q = h.transform.position;
+                if (h.Caught) { L($"   {b.name}: пойман"); continue; }
+                var onSlot = ShelfSlot.All.FirstOrDefault(sl => sl.Contains(q, 0.08f));
+                var under = bots.Where(o => o != b && !o.Hider.Caught && Vector3.Distance(Flat2(o.Hider.transform.position), Flat2(q)) < h.BodyRadius + o.Hider.BodyRadius + 0.05f && q.y - o.Hider.transform.position.y > 0.05f).Select(o => o.name).ToList();
+                int same = Prop.All.Count(pp => pp.ModelId == h.CurrentProp.ModelId && pp != h.CurrentProp && Vector3.Distance(pp.transform.position, q) < 1.5f);
+                bool seen = Visible(HunterEye(hunter.transform.position), h);
+                L($"   {b.name}: {b.Current}, плохое место={b.BadSpot()}, облик {h.CurrentProp.ModelId}, pos ({q.x:F2};{q.y:F2};{q.z:F2}), {(onSlot != null ? $"на полке {onSlot.transform.parent.name}/{onSlot.name}" : q.y < 0.1f ? "на полу" : "НЕ на полу и не на полке")}, стоит на боте: {(under.Count > 0 ? string.Join(",", under) : "нет")}, таких же предметов в 1,5 м: {same}, охотник видит: {seen}; переходов ок/неудач +{b.ShelfJumpsOk - o0[i]}/+{b.ShelfJumpsFail - f0[i]}; {b.LastLinkLog}");
+                if (b.BadSpot() || under.Count > 0) L("      журнал: " + string.Join(" | ", b.Trail.Skip(Mathf.Max(0, b.Trail.Count - 8))));
+            }
+        }
+    }
+
+    static IEnumerator MainRG()
+    {
+        yield return MainMorphRam();
+        L("==========");
+        yield return MainGroup();
+    }
+
+    static IEnumerator MainNew()
+    {
+        yield return MainMorphRam();
+        L("==========");
+        yield return MainGroup();
+        L("==========");
+        yield return MainAir();
+        L("==========");
+        yield return MainChase();
+        L("==========");
+        yield return MainShelf();
+    }
+
+    // Превратиться в крупный и таранить: мелкий бот (Snack) на полу в 1,5 м от среднего/крупного предмета, охотник в 4-5 м на виду,
+    // near-miss -> побег. Ждём: Morphing -> Ram, облик стал средним/крупным, охотник сбит.
+    static IEnumerator MainMorphRam()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        int n = 0;
+        foreach (var big in Prop.All.Where(pp => pp.IsFree && pp.tier >= PropTier.Medium && pp.transform.position.y - pp.height * 0.5f < 0.1f).Take(3).ToList())
+        {
+            var b = bots[n % bots.Count]; n++;
+            if (b.Hider.Caught) continue;
+            var snack = FreeModel("Snack");
+            if (snack != null) Morph(b.Hider, snack);
+            SetField(b.Hider, "<NextRepossessTime>k__BackingField", 0f);   // кулдаун смены готов (в бою он отсчитался бы сам)
+            // бот рядом с крупным предметом, со стороны зала
+            Vector3 bp = big.transform.position; Vector3 dirIn = Flat2(-bp).normalized;
+            if (!NavMesh.SamplePosition(bp + dirIn * (big.footRadius + 0.9f), out var nh, 1f, HumanoidFilter)) { L($"ram: нет места у {big.ModelId}"); continue; }
+            Teleport(b.Hider, nh.position);
+            yield return Wait(0.3f);
+            float tb = Time.time; while (b.Hider.Boost != HiderPlayer.BoostPhase.Ready && Time.time - tb < 20f) yield return null;
+            if (!FindView(b.Hider, 3.5f, 5f, out var hp)) { L($"ram: нет точки обзора у {big.ModelId}"); continue; }
+            PlaceHunter(hp, Center(b.Hider));
+            hunter.KnockImmuneUntil = 0f;
+            float mr0 = b.personality.morphRamChance; b.personality.morphRamChance = 1f;
+            int m0 = b.MorphRams, r0 = b.RamCount;
+            yield return Wait(0.3f);
+            b.Hider.OnNearMiss(4f);
+            var seq = new List<string> { b.Current.ToString() };
+            float t0 = Time.time; bool knocked = false; string modelAtRam = "";
+            while (Time.time - t0 < 6f)
+            {
+                if (seq[seq.Count - 1] != b.Current.ToString()) { seq.Add(b.Current.ToString()); if (b.Current == HiderBot.State.Ram) modelAtRam = $"{b.Hider.CurrentProp.ModelId} ({b.Hider.CurrentProp.tier})"; }
+                if (hunter.Knocked) knocked = true;
+                yield return null;
+            }
+            b.personality.morphRamChance = mr0;
+            L($"ram у {big.ModelId} ({big.tier}) {b.name}: превращений ради тарана +{b.MorphRams - m0}, таранов +{b.RamCount - r0}, облик при таране: {modelAtRam}, охотник сбит: {knocked}; состояния {string.Join("->", seq)}");
+            float tw = Time.time; while (hunter.Knocked && Time.time - tw < 8f) yield return null;
+            yield return Wait(1f);
+        }
     }
 
     static IEnumerator Ready()
