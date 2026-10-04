@@ -173,6 +173,21 @@ public class HiderBot : MonoBehaviour
             tickTimer = NearestHunterDistance() < nearRange ? 0f : farTick;
         }
         Act();
+        if (Diag != null && (Current == State.Flee || Current == State.Look || Current == State.Reacting)) DiagFrame();
+    }
+
+    // ---------- Диагностика видимости (включается тестом: Diag = new StringBuilder()) ----------
+    public System.Text.StringBuilder Diag;
+
+    void DiagFrame()
+    {
+        var h = HunterPlayer.All.Count > 0 ? HunterPlayer.All[0] : null;
+        if (h == null) return;
+        Vector3 eye = hider.EyePosition, chest = h.transform.position + Vector3.up * 1.2f;
+        string botRay = Physics.Linecast(eye, chest, out var b1, RamKickAuthority.StaticMask, QueryTriggerInteraction.Ignore) ? $"блок {b1.collider.name}@{b1.distance:F2}" : "чисто";
+        string hunRay = Physics.Linecast(h.EyePosition, hider.BodyCenter, out var b2, RamKickAuthority.StaticMask, QueryTriggerInteraction.Ignore) ? $"блок {b2.collider.name}@{b2.distance:F2}" : "чисто";
+        var p = hider.transform.position; var q = h.transform.position;
+        Diag.AppendLine($"{Time.time:F3} {Current} бот->охотн: {botRay} | охотн->бот: {hunRay} | дист {Vector3.Distance(p, q):F2} | бот ({p.x:F2};{p.y:F2};{p.z:F2}) охотн ({q.x:F2};{q.y:F2};{q.z:F2}) | невидим с {(unseenSince < 0 ? "-" : (Time.time - unseenSince).ToString("F2"))} | ввод ({input.move.x:F2};{input.move.y:F2})");
     }
 
     void SetState(State s) { Current = s; stateSince = Time.time; }

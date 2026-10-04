@@ -487,6 +487,94 @@ public static class BotPlayTest
         }
     }
 
+    // Запуск из MCP в уже идущем Play: BotPlayTest.StartScenario("chase").
+    public static void StartScenario(string name)
+    {
+        log.Clear();
+        run = name == "chase" ? MainChase() : null;
+        if (run != null) EditorApplication.update += Tick;
+    }
+
+    static IEnumerator Ready()
+    {
+        yield return Wait(1f);
+        hunter = HunterPlayer.All[0];
+        hunter.SetControlled(false);
+        float t0 = Time.time;
+        while (Time.time - t0 < 20f && HiderBot.All.Any(b => b.Hider.CurrentProp == null)) yield return null;
+        if (RoundState.Instance != null && RoundState.Instance.Phase == RoundPhase.Prep) RoundState.Instance.EndPrep();
+        yield return Wait(0.5f);
+    }
+
+    // Охотник бежит за ботом по навмешу каждый кадр (скорость охотника), целясь в него.
+    static void ChaseStep(HiderPlayer b)
+    {
+        var path = new NavMeshPath();
+        Vector3 from = hunter.transform.position;
+        Vector3 target = b.transform.position;
+        if (NavMesh.SamplePosition(target, out var tn, 3f, NavMesh.AllAreas)) target = tn.position;
+        Vector3 dir;
+        if (NavMesh.CalculatePath(from, target, NavMesh.AllAreas, path) && path.corners.Length > 1) dir = path.corners[1] - from;
+        else dir = target - from;
+        dir.y = 0f;
+        if (dir.magnitude > 1.2f || Vector3.Distance(from, b.transform.position) > 1.5f)
+            hunter.GetComponent<CharacterController>().Move(dir.normalized * hunter.walkSpeed * Time.deltaTime);
+        hunter.AimAt(Center(b));
+    }
+
+    static IEnumerator MainChase()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        int n = 0;
+        foreach (var b in bots)
+        {
+            if (b == null || b.Hider == null || b.Hider.Caught) continue;
+            n++;
+            // бот на пол в проход, охотник за ним в 5-7 м с видимостью, выстрел мимо рядом -> побег; дальше охотник гонится
+            if (!b.Hider.transform.position.y.Equals(0f) && b.Hider.transform.position.y > 0.3f)
+            {
+                for (int k = 0; k < 80; k++)
+                {
+                    var rnd = new Vector3(Random.Range(-8f, 8f), 0.1f, Random.Range(-4f, 3f));
+                    if (NavMesh.SamplePosition(rnd, out var nh, 1f, NavMesh.AllAreas) && nh.position.y < 0.3f) { Teleport(b.Hider, nh.position); break; }
+                }
+                yield return Wait(0.3f);
+            }
+            if (!EnsureView(b.Hider, 4f, 6f, out var hp)) { L($"chase {b.name}: нет точки обзора"); continue; }
+            PlaceHunter(hp, Center(b.Hider));
+            hunter.NextShotTime = 0f;
+            if (!NearMissAim(b.Hider, hunter.EyePosition, out var aim)) aim = Center(b.Hider) + Vector3.up * 1.2f;
+            hunter.AimAt(aim);
+            yield return null;
+            b.Diag = new StringBuilder();
+            hunter.Fire();
+            float t0 = Time.time; int falseSafe = 0; HiderBot.State last = b.Current;
+            var trans = new List<string>();
+            while (Time.time - t0 < 18f && b != null && !b.Hider.Caught)
+            {
+                if (b.Current == HiderBot.State.Flee || b.Current == HiderBot.State.Look || b.Current == HiderBot.State.Relocate || b.Current == HiderBot.State.Settle || b.Current == HiderBot.State.Freeze) ChaseStep(b.Hider);
+                if (b.Current != last)
+                {
+                    bool vis = Visible(HunterEye(hunter.transform.position), b.Hider);
+                    float d = Vector3.Distance(hunter.transform.position, b.Hider.transform.position);
+                    trans.Add($"   +{Time.time - t0:F2} {last} -> {b.Current}: охотник виден (тест, статика без своих коллайдеров)={vis}, дист {d:F2}");
+                    if (last == HiderBot.State.Flee && vis) falseSafe++;
+                    last = b.Current;
+                }
+                if (b.Current == HiderBot.State.Freeze && Time.time - t0 > 3f) break;
+                yield return null;
+            }
+            L($"chase #{n} {b.name} ({b.personality.name}, {b.Hider.CurrentProp?.ModelId}): ложных концов побега при видимом охотнике={falseSafe}; время {Time.time - t0:F1} с");
+            foreach (var s in trans) L(s);
+            L("   --- диагностика каждый кадр ---");
+            L(b.Diag.ToString());
+            b.Diag = null;
+            yield return Wait(1f);
+            if (n >= 2) break;
+        }
+    }
+
     // Одно обнаружение: охотник встаёт на 5-7 м с видимостью, стреляет (мимо рядом / прямо в бота), следим за реакцией.
     static IEnumerator RunDetect(string title, HiderBot b, bool hit, float minD, float maxD, string shotName = null)
     {
