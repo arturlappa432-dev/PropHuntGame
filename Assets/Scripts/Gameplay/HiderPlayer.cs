@@ -47,6 +47,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public Vector3 HorizontalVelocity { get { var v = cc.velocity; v.y = 0f; return v; } }
     public bool Grounded => cc != null && cc.enabled && cc.isGrounded;
     public float BodyRadius => cc != null ? cc.radius : 0.25f;
+    public float PropYaw => propYaw;   // поворот предмета-тела (Q/E), мировой yaw: корень тела не вращается
     public enum StunPhase { None, Flight, Out, Realign }   // пинок: кувырок -> «в отключке» (звёзды) -> самовыравнивание
     public StunPhase Stun { get; private set; } = StunPhase.None;
     public Prop CurrentProp { get; private set; }
@@ -154,6 +155,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             if (kb.qKey.isPressed) dir -= 1f;
             if (kb.eKey.isPressed && !eConsumed && !MorphReady) dir += 1f;
         }
+        if (botInput != null) dir += Mathf.Clamp(botInput.rotate, -1f, 1f);   // бот жмёт те же Q/E
         propYaw += dir * propTurnSpeed * Time.deltaTime;
         CurrentProp.transform.localRotation = Quaternion.Euler(0f, propYaw, 0f);
     }
@@ -479,8 +481,10 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         cc.enabled = false;
         transform.position = foot;
         transform.rotation = Quaternion.identity;
-        propYaw = 0f;
+        // поворот предмета сохраняется: раньше он сбрасывался в 0 и предмет заметно «прокручивался» в момент вселения
+        propYaw = prop.transform.eulerAngles.y;
         prop.AttachTo(transform);
+        prop.transform.localRotation = Quaternion.Euler(0f, propYaw, 0f);
         propBaseScale = prop.transform.localScale;
         prop.SetLayerRecursive(OwnBodyLayer);
         ApplyBodyShape(prop);

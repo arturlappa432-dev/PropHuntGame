@@ -493,7 +493,7 @@ public static class BotPlayTest
     public static void StartScenario(string name)
     {
         log.Clear();
-        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : name == "group" ? MainGroup() : name == "ram" ? MainMorphRam() : name == "new" ? MainNew() : name == "rg" ? MainRG() : null;
+        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : name == "group" ? MainGroup() : name == "ram" ? MainMorphRam() : name == "new" ? MainNew() : name == "rg" ? MainRG() : name == "pick" ? MainPick() : name == "align" ? MainAlign() : name == "pa" ? MainPA() : null;
         if (run != null) EditorApplication.update += Tick;
     }
 
@@ -618,7 +618,7 @@ public static class BotPlayTest
     {
         yield return Ready();
         var bots = HiderBot.All.OrderBy(b => b.name).ToList();
-        for (int round = 1; round <= 2; round++)
+        for (int round = 1; round <= 4; round++)
         {
             int k = 0;
             foreach (var b in bots)
@@ -633,7 +633,7 @@ public static class BotPlayTest
             yield return Wait(0.5f);
             var f0 = bots.Select(b => b.ShelfJumpsFail).ToList();
             var o0 = bots.Select(b => b.ShelfJumpsOk).ToList();
-            foreach (var b in bots) { b.Trail.Clear(); b.Hider.OnNearMiss(4f); }
+            foreach (var b in bots) { b.Trail.Clear(); b.Diag = new StringBuilder(); b.Hider.OnNearMiss(4f); }
             float t0 = Time.time; int lastF = -1;
             while (Time.time - t0 < 25f)
             {
@@ -646,13 +646,145 @@ public static class BotPlayTest
                 var b = bots[i]; var h = b.Hider; var q = h.transform.position;
                 if (h.Caught) { L($"   {b.name}: пойман"); continue; }
                 var onSlot = ShelfSlot.All.FirstOrDefault(sl => sl.Contains(q, 0.08f));
-                var under = bots.Where(o => o != b && !o.Hider.Caught && Vector3.Distance(Flat2(o.Hider.transform.position), Flat2(q)) < h.BodyRadius + o.Hider.BodyRadius + 0.05f && q.y - o.Hider.transform.position.y > 0.05f).Select(o => o.name).ToList();
+                var under = bots.Where(o => o != b && !o.Hider.Caught && Vector3.Distance(Flat2(o.Hider.transform.position), Flat2(q)) < h.BodyRadius + o.Hider.BodyRadius + 0.05f && q.y - o.Hider.transform.position.y > 0.05f && q.y - o.Hider.transform.position.y < o.Hider.BodyHeight + 0.1f).Select(o => o.name).ToList();
                 int same = Prop.All.Count(pp => pp.ModelId == h.CurrentProp.ModelId && pp != h.CurrentProp && Vector3.Distance(pp.transform.position, q) < 1.5f);
                 bool seen = Visible(HunterEye(hunter.transform.position), h);
                 L($"   {b.name}: {b.Current}, плохое место={b.BadSpot()}, облик {h.CurrentProp.ModelId}, pos ({q.x:F2};{q.y:F2};{q.z:F2}), {(onSlot != null ? $"на полке {onSlot.transform.parent.name}/{onSlot.name}" : q.y < 0.1f ? "на полу" : "НЕ на полу и не на полке")}, стоит на боте: {(under.Count > 0 ? string.Join(",", under) : "нет")}, таких же предметов в 1,5 м: {same}, охотник видит: {seen}; переходов ок/неудач +{b.ShelfJumpsOk - o0[i]}/+{b.ShelfJumpsFail - f0[i]}; {b.LastLinkLog}");
-                if (b.BadSpot() || under.Count > 0) L("      журнал: " + string.Join(" | ", b.Trail.Skip(Mathf.Max(0, b.Trail.Count - 8))));
+                if (b.BadSpot() || under.Count > 0)
+                {
+                    L("      журнал: " + string.Join(" | ", b.Trail.Skip(Mathf.Max(0, b.Trail.Count - 8))));
+                    var dl = b.Diag.ToString().Split('\n');
+                    L($"      --- покадрово {b.name} (каждый 5-й из последних 1500, всего {dl.Length}) ---");
+                    var tail = dl.Skip(Mathf.Max(0, dl.Length - 1500)).ToList();
+                    for (int kk = 0; kk < tail.Count; kk += 5) L("      " + tail[kk].TrimEnd());
+                }
+                b.Diag = null;
             }
         }
+    }
+
+    // Выбор предмета для вселения: реальный выбор в подготовке + 40 «раундов» жребием против старой формулы «лучший + шум».
+    static IEnumerator MainPick()
+    {
+        // реальная подготовка: что выбрали боты, с какой оценкой и укрытостью
+        yield return Wait(0.5f);
+        float tp = Time.time;
+        while (Time.time - tp < 20f && HiderBot.All.Any(b => b.Hider.CurrentProp == null)) yield return null;
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        L($"pick: точек обзора охотника для укрытости: {HiderBot.ViewPointCount}");
+        foreach (var b in bots) L($"   подготовка {b.name}: {b.DebugSeek}");
+        // поворот сохраняется при вселении: угол предмета против исходного (homeRot)
+        foreach (var b in bots)
+        {
+            var pr = b.Hider.CurrentProp; if (pr == null) continue;
+            var home = (Quaternion)typeof(Prop).GetField("homeRot", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(pr);
+            L($"   вселение {b.name}: поворот предмета {pr.transform.eulerAngles.y:F1}°, исходный {home.eulerAngles.y:F1}°, разница {Mathf.Abs(Mathf.DeltaAngle(pr.transform.eulerAngles.y, home.eulerAngles.y)):F1}°");
+        }
+        yield return Ready();
+        hunter.SetControlled(false);
+
+        const int R = 40;
+        var from = bots.Select((b, i) => new Vector3(-3f + 2f * i, 0f, -4.5f)).ToList();   // старт ботов у входа, как в BotSpawner
+        foreach (var method in new[] { "новый (жребий)", "старый (лучший + шум 2,2)" })
+        {
+            var picks = bots.Select(_ => new List<Prop>()).ToList();
+            var pairD = new List<float>(); int close = 0; float coverSum = 0f, natSum = 0f; int nPick = 0, repeats = 0;
+            var rnd = new System.Random(5);
+            HiderBot.SimPicks = true;
+            for (int r = 0; r < R; r++)
+            {
+                HiderBot.NewRound();
+                foreach (var b in bots) b.DebugClearPick();
+                var chosen = new List<Prop>();
+                for (int i = 0; i < bots.Count; i++)
+                {
+                    Prop p;
+                    if (method.StartsWith("новый")) p = bots[i].DebugDrawPick(from[i]);
+                    else
+                    {
+                        p = null; float best = float.MinValue;
+                        foreach (var q in Prop.All)
+                        {
+                            if (!q.IsFree || chosen.Contains(q)) continue;
+                            float sc = HiderBot.Naturalness(q) - 0.04f * Vector3.Distance(q.transform.position, from[i]) + (float)rnd.NextDouble() * 2.2f;
+                            if (sc > best) { best = sc; p = q; }
+                        }
+                    }
+                    if (p == null) continue;
+                    if (picks[i].Count > 0 && picks[i][picks[i].Count - 1] == p) repeats++;
+                    picks[i].Add(p); chosen.Add(p);
+                    coverSum += HiderBot.Cover(p); natSum += HiderBot.Naturalness(p); nPick++;
+                }
+                bool anyClose = false;
+                for (int a = 0; a < chosen.Count; a++) for (int c = a + 1; c < chosen.Count; c++)
+                    {
+                        float d = Vector3.Distance(chosen[a].transform.position, chosen[c].transform.position);
+                        pairD.Add(d); if (d < 2f) anyClose = true;
+                    }
+                if (anyClose) close++;
+                yield return null;
+            }
+            HiderBot.SimPicks = false;
+            L($"pick {method}, {R} раундов, {bots.Count} бота:");
+            for (int i = 0; i < bots.Count; i++)
+            {
+                var g = picks[i].GroupBy(x => x).OrderByDescending(x => x.Count()).ToList();
+                L($"   {bots[i].name} ({bots[i].personality.name}): разных предметов {g.Count} из {picks[i].Count}, самый частый {g[0].Key.ModelId}@({g[0].Key.transform.position.x:F1};{g[0].Key.transform.position.y:F1};{g[0].Key.transform.position.z:F1}) — {100f * g[0].Count() / picks[i].Count:F0}% раундов");
+            }
+            L($"   повторов «тот же предмет, что в прошлом раунде»: {repeats} из {nPick - bots.Count}; среднее расстояние между ботами {pairD.Average():F1} м (мин {pairD.Min():F1}); раундов, где два бота ближе 2 м: {close} из {R}; средняя укрытость выбранных {coverSum / nPick:F2} (по всем предметам {Prop.All.Average(q => HiderBot.Cover(q)):F2}); средняя естественность {natSum / nPick:F2} (по всем {Prop.All.Average(q => HiderBot.Naturalness(q)):F2})");
+        }
+        foreach (var b in bots) b.DebugClearPick();
+    }
+
+    // Поворот Q/E под соседа: бот-Box на полке рядом с другим Box, свой угол случайный -> после затаивания угол как у соседа (с учётом симметрии).
+    static IEnumerator MainAlign()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        Vector3 away = new Vector3(-8f, 0.05f, 5.5f);
+        PlaceHunter(away, away + Vector3.forward);
+        var b = bots[0];
+        int done = 0, tried = 0;
+        foreach (var box in Prop.All.Where(p => p.ModelId == "Box" && p.IsFree && p.OnShelf).Take(4).ToList())
+        {
+            var slot = ShelfSlot.All.FirstOrDefault(sl => sl.Contains(box.transform.position - Vector3.up * box.height * 0.5f, 0.08f));
+            if (slot == null) continue;
+            var sample = FreeModel("Box");
+            Morph(b.Hider, sample);
+            float u0 = slot.Project(box.transform.position);
+            float len = Vector3.Distance(slot.a, slot.b);
+            Vector3 spot = default; bool ok = false;
+            foreach (float du in new[] { 0.4f, -0.4f, 0.6f, -0.6f })
+                if (FreeShelfPointNear(slot, b.Hider, Mathf.Clamp01(u0 + du / len), out spot) && Vector3.Distance(spot, box.transform.position) < 1.5f) { ok = true; break; }
+            if (!ok) { L($"align: у {box.name}@{box.transform.position} нет места"); continue; }
+            if (NavMesh.SamplePosition(spot + slot.normal * 0.9f - Vector3.up * spot.y, out var fl, 1f, HumanoidFilter)) Teleport(b.Hider, fl.position);
+            float rnd0 = Random.Range(0f, 360f);
+            SetField(b.Hider, "propYaw", rnd0);
+            yield return Wait(0.4f);
+            tried++;
+            float t0 = Time.time;
+            b.Trail.Clear();
+            bool st = b.DebugGoTo(spot);
+            while (st && Time.time - t0 < 12f && b.Current == HiderBot.State.Relocate) yield return null;
+            yield return Wait(2.5f);   // затаился -> поворот (~до 1,8 с на 180°)
+            float step = box.Colliders[0] is BoxCollider bc && Mathf.Abs(bc.size.x * box.transform.lossyScale.x - bc.size.z * box.transform.lossyScale.z) <= 0.1f * Mathf.Max(bc.size.x * box.transform.lossyScale.x, bc.size.z * box.transform.lossyScale.z) ? 90f : 180f;
+            float diff(float a, float c) { float m = Mathf.Abs(Mathf.DeltaAngle(a, c)) % step; return Mathf.Min(m, step - m); }
+            var near = Prop.All.Where(q => q != b.Hider.CurrentProp && q.ModelId == "Box" && Mathf.Abs(q.transform.position.y - b.Hider.CurrentProp.transform.position.y) < 0.15f).OrderBy(q => Vector3.Distance(q.transform.position, b.Hider.transform.position)).FirstOrDefault();
+            float nowYaw = b.Hider.CurrentProp.transform.eulerAngles.y;
+            bool touches = Physics.OverlapBox(b.Hider.CurrentProp.Colliders[0].bounds.center + Vector3.up * 0.005f, Vector3.Scale(((BoxCollider)b.Hider.CurrentProp.Colliders[0]).size, b.Hider.CurrentProp.transform.lossyScale) * 0.5f - Vector3.one * 0.01f, b.Hider.CurrentProp.transform.rotation, ~0, QueryTriggerInteraction.Ignore).Any(c => !c.transform.IsChildOf(b.Hider.transform));
+            float before = near != null ? diff(rnd0, near.transform.eulerAngles.y) : -1f, after = near != null ? diff(nowYaw, near.transform.eulerAngles.y) : -1f;
+            if ((after >= 0f && after < 3f) || !touches) done++;
+            if (!(st && b.Current == HiderBot.State.Freeze) || !slot.Contains(b.Hider.transform.position, 0.08f)) L($"   путь={st}, спот ({spot.x:F2};{spot.y:F2};{spot.z:F2}), бот ({b.Hider.transform.position.x:F2};{b.Hider.transform.position.y:F2};{b.Hider.transform.position.z:F2}), {b.LastLinkLog}; журнал: {string.Join(" | ", b.Trail.Skip(Mathf.Max(0, b.Trail.Count - 6)))}");
+            L($"align у Box@({box.transform.position.x:F1};{box.transform.position.y:F2};{box.transform.position.z:F1}): дошёл={st && b.Current == HiderBot.State.Freeze}, на полке={slot.Contains(b.Hider.transform.position, 0.08f)}, угол до {rnd0:F0}° -> после {nowYaw:F0}°, сосед {(near != null ? near.transform.eulerAngles.y.ToString("F0") : "-")}° (шаг симметрии {step:F0}°): разница с соседом {before:F1}° -> {after:F1}°, задевает соседей/полку={touches}, поворотов запланировано {b.Aligns}");
+        }
+        L($"align итог: угол как у соседа (<3°) или ровно без задевания полки/соседей: {done} из {tried}");
+    }
+
+    static IEnumerator MainPA()
+    {
+        yield return MainPick();
+        L("==========");
+        yield return MainAlign();
     }
 
     static IEnumerator MainRG()
@@ -686,8 +818,8 @@ public static class BotPlayTest
         {
             var b = bots[n % bots.Count]; n++;
             if (b.Hider.Caught) continue;
-            var snack = FreeModel("Snack");
-            if (snack != null) Morph(b.Hider, snack);
+            var snack = FreeModel("Snack") ?? Prop.All.FirstOrDefault(pp => pp.IsFree && pp.tier <= PropTier.Small);   // мелкий облик для старта
+            if (snack != null) Morph(b.Hider, snack); else { L("ram: нет свободного мелкого предмета"); continue; }
             SetField(b.Hider, "<NextRepossessTime>k__BackingField", 0f);   // кулдаун смены готов (в бою он отсчитался бы сам)
             // бот рядом с крупным предметом, со стороны зала
             Vector3 bp = big.transform.position; Vector3 dirIn = Flat2(-bp).normalized;
@@ -700,6 +832,8 @@ public static class BotPlayTest
             hunter.KnockImmuneUntil = 0f;
             float mr0 = b.personality.morphRamChance; b.personality.morphRamChance = 1f;
             int m0 = b.MorphRams, r0 = b.RamCount;
+            SetField(b, "morphRamWhy", "");
+            b.RecordWhy = true;
             yield return Wait(0.3f);
             b.Hider.OnNearMiss(4f);
             var seq = new List<string> { b.Current.ToString() };
@@ -711,7 +845,7 @@ public static class BotPlayTest
                 yield return null;
             }
             b.personality.morphRamChance = mr0;
-            L($"ram у {big.ModelId} ({big.tier}) {b.name}: превращений ради тарана +{b.MorphRams - m0}, таранов +{b.RamCount - r0}, облик при таране: {modelAtRam}, охотник сбит: {knocked}; состояния {string.Join("->", seq)}");
+            L($"ram у {big.ModelId} ({big.tier}) {b.name}: превращений ради тарана +{b.MorphRams - m0}, таранов +{b.RamCount - r0}, облик при таране: {modelAtRam}, охотник сбит: {knocked}; состояния {string.Join("->", seq)}; последняя причина: {b.MorphRamWhy}");
             float tw = Time.time; while (hunter.Knocked && Time.time - tw < 8f) yield return null;
             yield return Wait(1f);
         }
