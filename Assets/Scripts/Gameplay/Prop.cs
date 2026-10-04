@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 
 public enum PropTier { Tiny = 0, Small = 1, Medium = 2, Large = 3 }
 
@@ -42,6 +43,26 @@ public class Prop : MonoBehaviour
         rend = GetComponentInChildren<Renderer>();
         plainMats = rend.sharedMaterials;
         Colliders = GetComponentsInChildren<Collider>();
+        if (OnShelf) MakeShelfObstacle();
+    }
+
+    // Предмет стоит на полке (низ выше пола)?
+    public bool OnShelf => transform.position.y - height * 0.5f > 0.15f;
+
+    // Свободный предмет на полке вырезает себя из навмеша полок (HiderSmall, docs/systems/bots.md): полка 0,275 м глубиной,
+    // мимо предмета не пройти — путь и место прыжка на уровень должны его обходить. Вселились — вырез снимается.
+    NavMeshObstacle obstacle;
+    void MakeShelfObstacle()
+    {
+        if (Colliders.Length == 0) return;
+        var b = Colliders[0].bounds;
+        obstacle = gameObject.AddComponent<NavMeshObstacle>();
+        obstacle.shape = NavMeshObstacleShape.Box;
+        var ls = transform.lossyScale;
+        obstacle.center = transform.InverseTransformPoint(b.center);
+        obstacle.size = new Vector3(b.size.x / Mathf.Abs(ls.x), b.size.y / Mathf.Abs(ls.y), b.size.z / Mathf.Abs(ls.z));
+        obstacle.carving = true;
+        obstacle.carveOnlyStationary = true;
     }
 
     // Подсветка видна только локальному игроку: материал добавляется на локальный рендерер, по сети не передаётся.
@@ -64,6 +85,7 @@ public class Prop : MonoBehaviour
 
     public void AttachTo(Transform body)
     {
+        if (obstacle != null) obstacle.enabled = false;
         transform.SetParent(body, false);
         transform.localPosition = new Vector3(0f, height * 0.5f, 0f);
         transform.localRotation = Quaternion.identity;
@@ -128,5 +150,6 @@ public class Prop : MonoBehaviour
         transform.SetParent(homeParent, true);
         transform.SetPositionAndRotation(homePos, homeRot);
         occupant = null;
+        if (obstacle != null) obstacle.enabled = true;
     }
 }

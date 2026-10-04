@@ -118,6 +118,7 @@ public static class SupermarketMapBuilder
             AssetDatabase.CreateAsset(surf.navMeshData, navPath);
         }
         EditorUtility.SetDirty(surf);
+        ShelfNavBuilder.Build(root);   // навмеш мелких предметов: пол + уровни полок, связи Jump
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene, ScenePath);
         AssetDatabase.SaveAssets();

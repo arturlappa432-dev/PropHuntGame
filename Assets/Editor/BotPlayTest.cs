@@ -72,6 +72,8 @@ public static class BotPlayTest
     static IEnumerator Wait(float sec) { float t0 = Time.time; while (Time.time - t0 < sec) yield return null; }
 
     static HunterPlayer hunter;
+    // Обычный агент (0): без фильтра запросы могли вернуть точку на навмеше полок HiderSmall (охотник ставился в стеллаж и падал сквозь пол)
+    static NavMeshQueryFilter HumanoidFilter => new NavMeshQueryFilter { agentTypeID = 0, areaMask = NavMesh.AllAreas };
 
     static void Teleport(HiderPlayer h, Vector3 p)
     {
@@ -110,7 +112,7 @@ public static class BotPlayTest
             {
                 float a = ((k + salt * 5) % 48) * Mathf.PI * 2f / 48f;
                 Vector3 want = new Vector3(b.transform.position.x + Mathf.Cos(a) * r, 0.1f, b.transform.position.z + Mathf.Sin(a) * r);
-                if (!NavMesh.SamplePosition(want, out var nh, 0.8f, NavMesh.AllAreas)) continue;
+                if (!NavMesh.SamplePosition(want, out var nh, 0.8f, HumanoidFilter)) continue;
                 if (!Visible(HunterEye(nh.position), b)) continue;
                 foot = nh.position; return true;
             }
@@ -125,7 +127,7 @@ public static class BotPlayTest
         for (int k = 0; k < 80; k++)
         {
             var rnd = new Vector3(Random.Range(-8f, 8f), 0.1f, Random.Range(-4.5f, 4.5f));
-            if (!NavMesh.SamplePosition(rnd, out var nh, 1f, NavMesh.AllAreas)) continue;
+            if (!NavMesh.SamplePosition(rnd, out var nh, 1f, HumanoidFilter)) continue;
             Teleport(b, nh.position);
             if (FindView(b, min, max, out foot)) { L($"   (бот {b.name} перенесён на пол для теста)"); return true; }
         }
@@ -214,7 +216,7 @@ public static class BotPlayTest
 
         // ---------- карта навмеша: '#' пол, связный со входом; 'o' пол, несвязный; '^' только выше пола; '.' нет ----------
         {
-            NavMesh.SamplePosition(new Vector3(0f, 0.1f, -5f), out var entry, 2f, NavMesh.AllAreas);
+            NavMesh.SamplePosition(new Vector3(0f, 0.1f, -5f), out var entry, 2f, HumanoidFilter);
             var path = new NavMeshPath();
             var sbn = new StringBuilder();
             sbn.AppendLine($"навмеш: вход {entry.position}");
@@ -224,9 +226,9 @@ public static class BotPlayTest
                 for (float x = -10f; x <= 10.01f; x += 0.5f)
                 {
                     char ch = '.';
-                    if (NavMesh.SamplePosition(new Vector3(x, 0.05f, z), out var f, 0.2f, NavMesh.AllAreas) && f.position.y < 0.3f)
-                        ch = NavMesh.CalculatePath(entry.position, f.position, NavMesh.AllAreas, path) && path.status == NavMeshPathStatus.PathComplete ? '#' : 'o';
-                    else if (NavMesh.SamplePosition(new Vector3(x, 1.0f, z), out var u, 1.0f, NavMesh.AllAreas) && u.position.y > 0.3f && Mathf.Abs(u.position.x - x) < 0.25f && Mathf.Abs(u.position.z - z) < 0.25f) ch = '^';
+                    if (NavMesh.SamplePosition(new Vector3(x, 0.05f, z), out var f, 0.2f, HumanoidFilter) && f.position.y < 0.3f)
+                        ch = NavMesh.CalculatePath(entry.position, f.position, HumanoidFilter, path) && path.status == NavMeshPathStatus.PathComplete ? '#' : 'o';
+                    else if (NavMesh.SamplePosition(new Vector3(x, 1.0f, z), out var u, 1.0f, HumanoidFilter) && u.position.y > 0.3f && Mathf.Abs(u.position.x - x) < 0.25f && Mathf.Abs(u.position.z - z) < 0.25f) ch = '^';
                     sbn.Append(ch);
                 }
                 sbn.AppendLine();
@@ -325,7 +327,7 @@ public static class BotPlayTest
                 for (int k = 0; k < 60 && !ok; k++)
                 {
                     var rnd = new Vector3(Random.Range(-7f, 7f), 0.1f, Random.Range(-4f, 4f));
-                    if (NavMesh.SamplePosition(rnd, out var nh, 1f, NavMesh.AllAreas)) { spot = nh.position; ok = true; }
+                    if (NavMesh.SamplePosition(rnd, out var nh, 1f, HumanoidFilter)) { spot = nh.position; ok = true; }
                 }
                 Teleport(b.Hider, spot);
                 yield return Wait(0.3f);
@@ -363,7 +365,7 @@ public static class BotPlayTest
             yield return Wait(1f);
             Vector3 farFoot = default; float bestD = 0f;
             for (float x = -9f; x <= 9f; x += 1.5f) for (float z = -6f; z <= 6f; z += 1.5f)
-                    if (NavMesh.SamplePosition(new Vector3(x, 0.1f, z), out var nh, 0.5f, NavMesh.AllAreas) && Vector3.Distance(nh.position, b.Hider.transform.position) > bestD)
+                    if (NavMesh.SamplePosition(new Vector3(x, 0.1f, z), out var nh, 0.5f, HumanoidFilter) && Vector3.Distance(nh.position, b.Hider.transform.position) > bestD)
                     { bestD = Vector3.Distance(nh.position, b.Hider.transform.position); farFoot = nh.position; }
             PlaceHunter(farFoot, Center(b.Hider));
             yield return Wait(0.5f);
@@ -384,7 +386,7 @@ public static class BotPlayTest
             // охотник далеко и без прямой видимости на первого бота
             Vector3 hid = new Vector3(9f, 0.1f, 5f); float bestHid = -1f;
             for (float x = -9f; x <= 9f; x += 1f) for (float z = -6f; z <= 6f; z += 1f)
-                    if (NavMesh.SamplePosition(new Vector3(x, 0.1f, z), out var nh2, 0.5f, NavMesh.AllAreas))
+                    if (NavMesh.SamplePosition(new Vector3(x, 0.1f, z), out var nh2, 0.5f, HumanoidFilter))
                         foreach (var bb in bots)
                             if (!Visible(HunterEye(nh2.position), bb.Hider) && Vector3.Distance(nh2.position, bb.Hider.transform.position) > bestHid) { bestHid = Vector3.Distance(nh2.position, bb.Hider.transform.position); hid = nh2.position; }
             PlaceHunter(hid, hid + Vector3.forward);
@@ -433,7 +435,7 @@ public static class BotPlayTest
         yield return Wait(4f);
         if (RoundState.Instance != null && RoundState.Instance.Phase == RoundPhase.Prep) RoundState.Instance.EndPrep();
         yield return Wait(1f);
-        L($"веса виляния: amplitude={bots[0].weaveAmplitude}, frequency={bots[0].weaveFrequency}, удержание невидимости={bots[0].fleeUnseenHold} с");
+        L($"веса виляния: amplitude={bots[0].weaveAmplitude}, period={bots[0].weavePeriod}, удержание невидимости={bots[0].fleeUnseenHold} с");
 
         // ---------- A/B: побег (near-miss), невидимость подряд и виляние ----------
         yield return RunDetect("A near-miss (осторожный)", bots[0], false, 3f, 7f);
@@ -491,8 +493,123 @@ public static class BotPlayTest
     public static void StartScenario(string name)
     {
         log.Clear();
-        run = name == "chase" ? MainChase() : null;
+        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : null;
         if (run != null) EditorApplication.update += Tick;
+    }
+
+    static IEnumerator MainAll()
+    {
+        yield return MainShelf();
+        L("==========");
+        yield return MainWeave();
+        L("==========");
+        yield return MainChase();
+        L("==========");
+        yield return MainAir();
+    }
+
+    static IEnumerator MainWC()
+    {
+        yield return MainWeave();
+        L("==========");
+        yield return MainChase();
+    }
+
+    // Виляние на земле и в воздухе: побег по длинному прямому коридору перед кассами (z=-3, x -8,5 -> 8,5), охотник видит бота сзади.
+    // Покадрово: боковое смещение от оси коридора, земля/воздух; картинка следа сверху (красный — земля, синий — воздух).
+    static IEnumerator MainAir()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        float speed0 = hunter.walkSpeed;
+        int run = 0;
+        foreach (var (model, b, fps) in new[] { ("Box", bots[0], -1), ("Box", bots[0], 60), ("Bin", bots[1], 60) })
+        {
+            run++;
+            Application.targetFrameRate = fps; QualitySettings.vSyncCount = 0;
+            var sample = FreeModel(model);
+            if (sample != null) Morph(b.Hider, sample);
+            NavMesh.SamplePosition(new Vector3(-8.5f, 0.05f, -3.0f), out var st, 1f, HumanoidFilter);
+            Teleport(b.Hider, st.position);
+            PlaceHunter(new Vector3(-9.6f, 0.05f, -3.0f), Center(b.Hider));
+            hunter.walkSpeed = 3.2f;
+            yield return Wait(0.6f);
+            NavMesh.SamplePosition(new Vector3(8.5f, 0.05f, -3.0f), out var en, 1f, HumanoidFilter);
+            float ram0 = b.personality.ramChance; b.personality.ramChance = 0f;
+            int ej0 = b.EvadeJumps;
+            bool ok = b.DebugFleeTo(en.position);
+            var pts = new List<(Vector3 p, bool air, float off)>();
+            float t0 = Time.time; int lastF = -1, airFrames = 0, frames = 0;
+            float airOffMin = 99f, airOffMax = -99f;
+            var lat = new StringBuilder();
+            float lastLat = -1f;
+            while (ok && Time.time - t0 < 9f && b.Current == HiderBot.State.Flee && b.Hider.transform.position.x < 8f)
+            {
+                if (Time.frameCount != lastF)
+                {
+                    lastF = Time.frameCount; frames++;
+                    ChaseStep(b.Hider);
+                    var q = b.Hider.transform.position;
+                    bool air = !b.Hider.Grounded;
+                    if (air) { airFrames++; airOffMin = Mathf.Min(airOffMin, b.WeaveOffset); airOffMax = Mathf.Max(airOffMax, b.WeaveOffset); }
+                    pts.Add((q, air, b.WeaveOffset));
+                    if (Time.time - lastLat >= 0.1f) { lastLat = Time.time; lat.Append($"{q.z + 3f:+0.00;-0.00}{(air ? "*" : "")} "); }
+                }
+                yield return null;
+            }
+            hunter.walkSpeed = speed0; b.personality.ramChance = ram0;
+            // развороты бокового движения (по z) по точкам через 10 см пути
+            var kept = new List<(Vector3 p, float t)>(); int idx = 0;
+            foreach (var pt in pts) { if (kept.Count == 0 || Vector3.Distance(Flat2(pt.p), Flat2(kept[kept.Count - 1].p)) >= 0.1f) kept.Add((pt.p, idx)); idx++; }
+            int rev = 0; float lastSign = 0f;
+            for (int i = 1; i < kept.Count; i++) { float dz = kept[i].p.z - kept[i - 1].p.z; if (Mathf.Abs(dz) < 0.004f) continue; float sg = Mathf.Sign(dz); if (lastSign != 0f && sg != lastSign) rev++; lastSign = sg; }
+            float dist = pts.Count > 1 ? pts[pts.Count - 1].p.x - pts[0].p.x : 0f;
+            float zMin = pts.Count > 0 ? pts.Min(x => x.p.z) + 3f : 0f, zMax = pts.Count > 0 ? pts.Max(x => x.p.z) + 3f : 0f;
+            L($"air #{run} [{model}, {(fps < 0 ? "без ограничения" : fps + " кадр/с")}] {b.name}: пробежал {dist:F1} м за {Time.time - t0:F1} с; кадров {frames}, в воздухе {airFrames}; прыжков уклонения {b.EvadeJumps - ej0}; " +
+              $"боковое отклонение от оси {zMin:+0.00;-0.00}..{zMax:+0.00;-0.00} м; разворотов бокового движения {rev} (≈ {(dist > 0 ? rev / (dist / 4f) : 0):F2} на период при 4 м/с); смещение цели в воздухе {airOffMin:F2}..{airOffMax:F2}; итог {b.Current}");
+            L($"   боковое смещение каждые 0,1 с (* = в воздухе): {lat}");
+            if (run == 2 && pts.Count > 2) yield return TrailShot(pts, "bot_weave_trail");
+            yield return Wait(0.5f);
+        }
+        Application.targetFrameRate = -1;
+    }
+
+    static Vector3 Flat2(Vector3 v) { v.y = 0f; return v; }
+
+    // Картинка следа сверху: ортокамера под потолком, рендер в текстуру -> PNG (без окна Game).
+    static IEnumerator TrailShot(List<(Vector3 p, bool air, float off)> pts, string file)
+    {
+        var root = new GameObject("TrailViz");
+        var mat = new Material(Shader.Find("Sprites/Default"));
+        int i = 0;
+        while (i < pts.Count - 1)
+        {
+            bool air = pts[i].air; var seg = new List<Vector3>();
+            while (i < pts.Count && pts[i].air == air) { seg.Add(pts[i].p + Vector3.up * 0.05f); i++; }
+            if (i < pts.Count) seg.Add(pts[i].p + Vector3.up * 0.05f);
+            var go = new GameObject("seg"); go.transform.SetParent(root.transform);
+            var lr = go.AddComponent<LineRenderer>();
+            lr.sharedMaterial = mat; lr.widthMultiplier = 0.07f; lr.positionCount = seg.Count; lr.SetPositions(seg.ToArray());
+            lr.startColor = lr.endColor = air ? new Color(0.2f, 0.45f, 1f) : new Color(1f, 0.15f, 0.1f);
+            lr.alignment = LineAlignment.View;
+        }
+        var camGo = new GameObject("TrailCam");
+        var cam = camGo.AddComponent<Camera>();
+        cam.orthographic = true; cam.orthographicSize = 2.6f; cam.aspect = 4f;
+        cam.transform.SetPositionAndRotation(new Vector3(0f, 3.3f, -3.0f), Quaternion.Euler(90f, 0f, 0f));
+        cam.nearClipPlane = 0.05f; cam.farClipPlane = 5f;
+        var rt = new RenderTexture(2000, 500, 24);
+        cam.targetTexture = rt; cam.enabled = false;
+        yield return null;
+        cam.Render();
+        RenderTexture.active = rt;
+        var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+        tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0); tex.Apply();
+        RenderTexture.active = null;
+        File.WriteAllBytes($"Assets/Screenshots/{file}.png", tex.EncodeToPNG());
+        cam.targetTexture = null;
+        Object.Destroy(rt); Object.Destroy(camGo); Object.Destroy(root); Object.Destroy(tex);
+        L($"   след сверху: Assets/Screenshots/{file}.png (красный — земля, синий — воздух)");
     }
 
     static IEnumerator Ready()
@@ -507,17 +624,22 @@ public static class BotPlayTest
     }
 
     // Охотник бежит за ботом по навмешу каждый кадр (скорость охотника), целясь в него.
+    static int chaseFrame = -1;
     static void ChaseStep(HiderPlayer b)
     {
+        // корутина теста идёт по EditorApplication.update, он может тикать чаще кадров игры: шаг охотника — раз в кадр
+        if (Time.frameCount == chaseFrame) return;
+        chaseFrame = Time.frameCount;
         var path = new NavMeshPath();
         Vector3 from = hunter.transform.position;
         Vector3 target = b.transform.position;
-        if (NavMesh.SamplePosition(target, out var tn, 3f, NavMesh.AllAreas)) target = tn.position;
+        if (NavMesh.SamplePosition(target, out var tn, 3f, HumanoidFilter)) target = tn.position;
         Vector3 dir;
-        if (NavMesh.CalculatePath(from, target, NavMesh.AllAreas, path) && path.corners.Length > 1) dir = path.corners[1] - from;
+        if (NavMesh.CalculatePath(from, target, HumanoidFilter, path) && path.corners.Length > 1) dir = path.corners[1] - from;
         else dir = target - from;
         dir.y = 0f;
-        if (dir.magnitude > 1.2f || Vector3.Distance(from, b.transform.position) > 1.5f)
+        Vector3 flat = b.transform.position - from; flat.y = 0f;
+        if (flat.magnitude > 1.5f)   // по горизонтали: иначе охотник подбегал под бота в прыжке и тот стоял у него на голове
             hunter.GetComponent<CharacterController>().Move(dir.normalized * hunter.walkSpeed * Time.deltaTime);
         hunter.AimAt(Center(b));
     }
@@ -537,7 +659,7 @@ public static class BotPlayTest
                 for (int k = 0; k < 80; k++)
                 {
                     var rnd = new Vector3(Random.Range(-8f, 8f), 0.1f, Random.Range(-4f, 3f));
-                    if (NavMesh.SamplePosition(rnd, out var nh, 1f, NavMesh.AllAreas) && nh.position.y < 0.3f) { Teleport(b.Hider, nh.position); break; }
+                    if (NavMesh.SamplePosition(rnd, out var nh, 1f, HumanoidFilter) && nh.position.y < 0.3f) { Teleport(b.Hider, nh.position); break; }
                 }
                 yield return Wait(0.3f);
             }
@@ -549,7 +671,7 @@ public static class BotPlayTest
             yield return null;
             b.Diag = new StringBuilder();
             hunter.Fire();
-            float t0 = Time.time; int falseSafe = 0; HiderBot.State last = b.Current;
+            float t0 = Time.time; int falseSafe = 0, frozenSeen = 0; HiderBot.State last = b.Current;
             var trans = new List<string>();
             while (Time.time - t0 < 18f && b != null && !b.Hider.Caught)
             {
@@ -559,13 +681,15 @@ public static class BotPlayTest
                     bool vis = Visible(HunterEye(hunter.transform.position), b.Hider);
                     float d = Vector3.Distance(hunter.transform.position, b.Hider.transform.position);
                     trans.Add($"   +{Time.time - t0:F2} {last} -> {b.Current}: охотник виден (тест, статика без своих коллайдеров)={vis}, дист {d:F2}");
-                    if (last == HiderBot.State.Flee && vis) falseSafe++;
+                    if (last == HiderBot.State.Flee && vis && b.Current != HiderBot.State.Ram) falseSafe++;
                     last = b.Current;
                 }
-                if (b.Current == HiderBot.State.Freeze && Time.time - t0 > 3f) break;
+                if ((b.Current == HiderBot.State.Freeze || b.Current == HiderBot.State.Look || b.Current == HiderBot.State.Settle)
+                    && Vector3.Distance(hunter.transform.position, b.Hider.transform.position) < 6f && Visible(HunterEye(hunter.transform.position), b.Hider)) frozenSeen++;
                 yield return null;
             }
-            L($"chase #{n} {b.name} ({b.personality.name}, {b.Hider.CurrentProp?.ModelId}): ложных концов побега при видимом охотнике={falseSafe}; время {Time.time - t0:F1} с");
+            L($"chase #{n} {b.name} ({b.personality.name}, {b.Hider.CurrentProp?.ModelId}): ложных концов побега при видимом охотнике={falseSafe}; кадров «замер/осмотр на виду ближе 6 м»={frozenSeen}; время {Time.time - t0:F1} с; " +
+              $"конец побега={b.FleeEndReason}, этапов={b.FleeLegs}, загнан={b.CorneredCount}, продолжений побега={b.ResumedFlees}, сбросов спокойствия={b.UnseenResets}, таранов={b.RamCount}, затаился (не виден, пути мимо охотника)={b.HoldCount}, прыжков на полку ок/неудач={b.ShelfJumpsOk}/{b.ShelfJumpsFail}");
             foreach (var s in trans) L(s);
             L("   --- диагностика каждый кадр ---");
             L(b.Diag.ToString());
@@ -573,6 +697,191 @@ public static class BotPlayTest
             yield return Wait(1f);
             if (n >= 2) break;
         }
+    }
+
+    static Prop FreeModel(string model) => Prop.All.FirstOrDefault(p => p.ModelId == model && p.IsFree);
+
+    static bool FreeShelfPoint(ShelfSlot s, HiderPlayer h, out Vector3 spot)
+    {
+        spot = default;
+        int small = 0;
+        for (int i = 0; i < NavMesh.GetSettingsCount(); i++) { int id = NavMesh.GetSettingsByIndex(i).agentTypeID; if (NavMesh.GetSettingsNameFromID(id) == "HiderSmall") small = id; }
+        var f = new NavMeshQueryFilter { agentTypeID = small, areaMask = NavMesh.AllAreas };
+        for (float k = 0f; k < 0.36f; k += 0.04f)
+            foreach (float u in new[] { 0.5f + k, 0.5f - k })
+            {
+                Vector3 p = s.Point(u);
+                float r = h.BodyRadius + 0.05f, hh = h.BodyHeight * 0.5f;
+                bool busy = Physics.OverlapBox(p + Vector3.up * (hh + 0.01f), new Vector3(r, hh - 0.005f, r), Quaternion.identity, ~0, QueryTriggerInteraction.Ignore)
+                    .Any(c => !c.transform.IsChildOf(h.transform) && (c.GetComponentInParent<Prop>() != null || c.GetComponentInParent<HiderPlayer>() != null));
+                if (busy) continue;
+                if (!NavMesh.SamplePosition(p, out var nh, 0.15f, f)) continue;
+                spot = nh.position; return true;
+            }
+        return false;
+    }
+
+    // Прятки на полках: бот (Small/Tiny) сам идёт на каждый уровень (0 основание .. 4 верхняя полка) по навмешу HiderSmall
+    // с переходом Jump и спускается обратно на пол. Без ограничения кадров и при 60 кадр/с.
+    static IEnumerator MainShelf()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        Vector3 away = new Vector3(-8f, 0.05f, 5.5f);   // охотник в подсобке: бота не видит, перемещению не мешает
+        PlaceHunter(away, away + Vector3.forward);
+        var cfgs = new[] { ("Can", bots[1], -1), ("Can", bots[1], 60), ("Box", bots[0], 60) };
+        foreach (var (model, b, fps) in cfgs)
+        {
+            Application.targetFrameRate = fps; QualitySettings.vSyncCount = 0;
+            var sample = FreeModel(model);
+            if (sample == null) { L($"shelf: нет свободного {model}"); continue; }
+            Morph(b.Hider, sample);
+            if (NavMesh.SamplePosition(new Vector3(-1f, 0.05f, -3.2f), out var st, 1f, HumanoidFilter)) Teleport(b.Hider, st.position);
+            yield return Wait(0.5f);
+            L($"shelf [{model}, {(fps < 0 ? "без ограничения" : fps + " кадр/с")}] {b.name}: тело r={b.Hider.BodyRadius:F2} h={b.Hider.BodyHeight:F2}, мелкое (навмеш HiderSmall)={b.SmallBody}");
+            for (int lv = 0; lv <= 4; lv++)
+            {
+                var slot = ShelfSlot.All.Where(s => s.level == lv).OrderBy(s => Vector3.Distance(s.Point(0.5f), b.Hider.transform.position)).FirstOrDefault(s => FreeShelfPoint(s, b.Hider, out _));
+                if (slot == null || !FreeShelfPoint(slot, b.Hider, out var spot)) { L($"   уровень {lv}: нет свободного места"); continue; }
+                int ok0 = b.ShelfJumpsOk, fail0 = b.ShelfJumpsFail;
+                float t0 = Time.time; int f0 = Time.frameCount;
+                string pre = $"облик {b.Hider.CurrentProp.ModelId}, мелкое={b.SmallBody}, состояние {b.Current}";
+                bool started = b.DebugGoTo(spot);
+                string pathInfo = started ? $"углов {b.PathCorners.Length}, конец y={b.PathCorners[b.PathCorners.Length - 1].y:F2}" : "";
+                var seq = new List<string> { b.Current.ToString() };
+                while (started && Time.time - t0 < 15f && b.Current == HiderBot.State.Relocate) yield return null;
+                seq.Add(b.Current.ToString());
+                yield return Wait(0.6f);
+                L($"      ({pre}; {pathInfo}; состояния {string.Join("->", seq)})");
+                Vector3 foot = b.Hider.transform.position;
+                bool on = slot.Contains(foot, 0.08f);
+                float fpsReal = (Time.frameCount - f0) / Mathf.Max(0.01f, Time.time - t0);
+                L($"   уровень {lv} ({slot.transform.parent.name}/{slot.name}, верх {slot.top:F2}, просвет {slot.clearance:F2}): путь={started}, за {Time.time - t0 - 0.6f:F1} с, бот y={foot.y:F2}, на полке={on}, переходов ок/неудач +{b.ShelfJumpsOk - ok0}/+{b.ShelfJumpsFail - fail0}, ~{fpsReal:F0} кадр/с; {b.LastLinkLog}");
+                if (on && fps < 0)
+                {
+                    // кадр глазами охотника из прохода: бот среди предметов на полке
+                    DebugRoleSwitch.Swap();
+                    Vector3 eyeFoot = new Vector3(foot.x + 0.6f, 0.05f, foot.z + slot.normal.z * 2.2f);
+                    if (NavMesh.SamplePosition(eyeFoot, out var ef, 1f, HumanoidFilter)) PlaceHunter(ef.position, b.Hider.BodyCenter);
+                    yield return Wait(0.4f);
+                    ScreenCapture.CaptureScreenshot($"Assets/Screenshots/bot_shelf_level{lv}.png");
+                    yield return Wait(0.4f);
+                    DebugRoleSwitch.Swap();
+                    PlaceHunter(away, away + Vector3.forward);
+                    yield return Wait(0.2f);
+                }
+                // обратно на пол прохода
+                Vector3 down = foot + slot.normal * 0.9f; down.y = 0.05f;
+                if (NavMesh.SamplePosition(down, out var dn, 1f, HumanoidFilter))
+                {
+                    t0 = Time.time; ok0 = b.ShelfJumpsOk;
+                    bool s2 = b.DebugGoTo(dn.position);
+                    while (s2 && Time.time - t0 < 10f && b.Current == HiderBot.State.Relocate) yield return null;
+                    yield return Wait(0.3f);
+                    L($"      спуск: путь={s2}, за {Time.time - t0 - 0.3f:F1} с, бот y={b.Hider.transform.position.y:F2}, переходов ок +{b.ShelfJumpsOk - ok0}; {b.LastLinkLog}");
+                }
+            }
+            // убрать бота с прохода, чтобы не мешал следующему прогону
+            if (NavMesh.SamplePosition(new Vector3(8.5f, 0.05f, -6f), out var park, 2f, HumanoidFilter)) Teleport(b.Hider, park.position);
+        }
+        // Край стеллажа: бот подходит сбоку от торца, место у самого торца (u 0,02/0,98) — раньше прыгал вдоль торцевой стенки
+        {
+            var b = bots[0];
+            Application.targetFrameRate = 60;
+            int okE = 0, allE = 0;
+            foreach (int lv in new[] { 1, 2, 3, 4 })
+                foreach (float u in new[] { 0.02f, 0.98f })
+                {
+                    var slot = ShelfSlot.All.FirstOrDefault(sl => sl.level == lv && sl.transform.parent.name == "ShelfRow_1" && sl.normal.z < 0);
+                    if (slot == null) continue;
+                    if (!FreeShelfPointNear(slot, b.Hider, u, out var spot)) { L($"edge уровень {lv} u={u}: место занято"); continue; }
+                    Vector3 side = new Vector3(u < 0.5f ? -6.3f : 6.3f, 0.05f, -2.7f);
+                    if (NavMesh.SamplePosition(side, out var sp, 1f, HumanoidFilter)) Teleport(b.Hider, sp.position);
+                    yield return Wait(0.3f);
+                    int ok0 = b.ShelfJumpsOk, f0 = b.ShelfJumpsFail; float t0 = Time.time;
+                    bool st = b.DebugGoTo(spot);
+                    while (st && Time.time - t0 < 12f && b.Current == HiderBot.State.Relocate) yield return null;
+                    yield return Wait(0.5f);
+                    bool on = slot.Contains(b.Hider.transform.position, 0.08f);
+                    allE++; if (on) okE++;
+                    L($"edge уровень {lv} u={u:F2} (x={spot.x:F2}): на полке={on}, y={b.Hider.transform.position.y:F2}, переходов ок/неудач +{b.ShelfJumpsOk - ok0}/+{b.ShelfJumpsFail - f0}, {Time.time - t0 - 0.5f:F1} с; {b.LastLinkLog}");
+                }
+            L($"edge итог: {okE}/{allE}");
+        }
+        Application.targetFrameRate = -1;
+    }
+
+    static bool FreeShelfPointNear(ShelfSlot s, HiderPlayer h, float u0, out Vector3 spot)
+    {
+        spot = default;
+        int small = 0;
+        for (int i = 0; i < NavMesh.GetSettingsCount(); i++) { int id = NavMesh.GetSettingsByIndex(i).agentTypeID; if (NavMesh.GetSettingsNameFromID(id) == "HiderSmall") small = id; }
+        var f = new NavMeshQueryFilter { agentTypeID = small, areaMask = NavMesh.AllAreas };
+        float dir = u0 < 0.5f ? 1f : -1f;
+        for (float k = 0f; k < 0.15f; k += 0.01f)
+        {
+            Vector3 p = s.Point(u0 + dir * k);
+            float r = h.BodyRadius + 0.05f, hh = h.BodyHeight * 0.5f;
+            bool busy = Physics.OverlapBox(p + Vector3.up * (hh + 0.01f), new Vector3(r, hh - 0.005f, r), Quaternion.identity, ~0, QueryTriggerInteraction.Ignore)
+                .Any(c => !c.transform.IsChildOf(h.transform) && (c.GetComponentInParent<Prop>() != null || c.GetComponentInParent<HiderPlayer>() != null));
+            if (busy) continue;
+            if (!NavMesh.SamplePosition(p, out var nh, 0.12f, f)) continue;
+            spot = nh.position; return true;
+        }
+        return false;
+    }
+
+    // Виляние: побег с охотником, идущим следом медленнее (3 м/с), каждый кадр в Diag (позиция, смещение вбок, земля). Анализ — отдельно по логу.
+    static IEnumerator MainWeave()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        float speed0 = hunter.walkSpeed;
+        var cfgs = new[] { ("Box", bots[0], -1), ("Bin", bots[1], -1), ("Box", bots[2 % bots.Count], 60) };
+        foreach (var (model, b, fps) in cfgs)
+        {
+            Application.targetFrameRate = fps; QualitySettings.vSyncCount = 0;
+            var sample = FreeModel(model);
+            if (sample != null) Morph(b.Hider, sample);
+            if (NavMesh.SamplePosition(new Vector3(-6f, 0.05f, -3.3f), out var st, 1f, HumanoidFilter)) Teleport(b.Hider, st.position);
+            yield return Wait(0.6f);
+            if (!EnsureView(b.Hider, 4f, 6f, out var hp)) { L($"weave {b.name}: нет точки обзора"); continue; }
+            PlaceHunter(hp, Center(b.Hider));
+            hunter.NextShotTime = 0f;
+            if (!NearMissAim(b.Hider, hunter.EyePosition, out var aim)) aim = Center(b.Hider) + Vector3.up * 1.2f;
+            hunter.AimAt(aim);
+            yield return null;
+            b.Diag = new StringBuilder();
+            int ej0 = b.EvadeJumps, jc0 = b.JumpChecks;
+            float ram0 = b.personality.ramChance;
+            b.personality.ramChance = 0f;   // проверяем бег, не таран
+            hunter.walkSpeed = 3f;
+            hunter.Fire();
+            float t0 = Time.time; int air = 0, frames = 0, lastF = -1, strayLand = 0; bool wasG = true, wasLink = false; float airFrom = 0f;
+            while (Time.time - t0 < 14f && b != null && !b.Hider.Caught)
+            {
+                if (b.Current == HiderBot.State.Flee && Time.frameCount != lastF)
+                {
+                    lastF = Time.frameCount; ChaseStep(b.Hider); frames++;
+                    bool g = b.Hider.Grounded;
+                    if (!g && !b.LinkActive) air++;
+                    // приземление после прыжка уклонения не на пол (полка, чужая голова) — то, чего коридор прыжка должен избегать
+                    if (!g && wasG) airFrom = Time.time;
+                    if (g && !wasG && !b.LinkActive && !wasLink && Time.time - airFrom > 0.2f && b.Hider.transform.position.y > 0.15f) strayLand++;
+                    wasG = g; wasLink = b.LinkActive;
+                }
+                if (b.Current != HiderBot.State.Flee && b.Current != HiderBot.State.Reacting && Time.time - t0 > 1f) break;
+                yield return null;
+            }
+            hunter.walkSpeed = speed0;
+            b.personality.ramChance = ram0;
+            L($"weave [{model}, {(fps < 0 ? "без ограничения" : fps + " кадр/с")}] {b.name}: кадров побега {frames}, в воздухе {air}, итог {b.Current} ({b.FleeEndReason}), ампл={b.weaveAmplitude} м, период={b.weavePeriod} с; прыжков уклонения {b.EvadeJumps - ej0} из проверок {b.JumpChecks - jc0}, последняя помеха: {b.JumpBlockedBy}; приземлений не на пол вне перехода: {strayLand}");
+            L("   --- диагностика каждый кадр ---");
+            L(b.Diag.ToString());
+            b.Diag = null;
+            yield return Wait(1f);
+        }
+        Application.targetFrameRate = -1;
     }
 
     // Одно обнаружение: охотник встаёт на 5-7 м с видимостью, стреляет (мимо рядом / прямо в бота), следим за реакцией.

@@ -45,6 +45,8 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public bool IsAlive => !Caught;
     public Vector3 BodyCenter => Stun != StunPhase.None && CurrentProp != null ? CurrentProp.transform.position : transform.position + Vector3.up * BodyHeight * 0.5f;
     public Vector3 HorizontalVelocity { get { var v = cc.velocity; v.y = 0f; return v; } }
+    public bool Grounded => cc != null && cc.enabled && cc.isGrounded;
+    public float BodyRadius => cc != null ? cc.radius : 0.25f;
     public enum StunPhase { None, Flight, Out, Realign }   // пинок: кувырок -> «в отключке» (звёзды) -> самовыравнивание
     public StunPhase Stun { get; private set; } = StunPhase.None;
     public Prop CurrentProp { get; private set; }
@@ -189,7 +191,8 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         }
         if (grounded) vy = -1f; else vy += gravity * Time.deltaTime;
         move.y = vy;
-        cc.Move(move * Time.deltaTime);
+        var flags = cc.Move(move * Time.deltaTime);
+        if ((flags & CollisionFlags.Above) != 0 && vy > 0f) vy = 0f;   // ударился головой (полка над головой): подъём гасится, дальше падение
         wasAirborne = !cc.isGrounded;
     }
 

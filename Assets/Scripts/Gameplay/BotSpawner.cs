@@ -17,7 +17,7 @@ public class BotSpawner : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             Vector3 want = spawnCenter + new Vector3((float)(rng.NextDouble() * 2 - 1) * spawnSpread, 0f, (float)(rng.NextDouble() * 2 - 1) * 1.5f);
-            Vector3 pos = NavMesh.SamplePosition(want, out var nh, 3f, NavMesh.AllAreas) ? nh.position : want;
+            Vector3 pos = NavMesh.SamplePosition(want, out var nh, 3f, new NavMeshQueryFilter { agentTypeID = 0, areaMask = NavMesh.AllAreas }) ? nh.position : want;   // агент 0: иначе может попасть на навмеш полок (HiderSmall)
             var p = i % 2 == 0 ? BotPersonality.Cautious() : BotPersonality.Bold();
             Spawn(pos, p, seed * 100 + i, template, $"Bot_{i + 1}_{p.name}");
         }
