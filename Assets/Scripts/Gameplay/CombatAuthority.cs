@@ -95,7 +95,7 @@ public class CombatAuthority : MonoBehaviour
             foreach (var e in ends)
                 if (DistToSegment(c, origin, e) <= nearMissRadius)
                 {
-                    h.OnNearMiss(hd);
+                    h.OnNearMiss(hd, origin, forward);
                     res.nearMisses++;
                     break;
                 }

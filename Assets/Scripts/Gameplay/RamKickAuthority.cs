@@ -39,9 +39,11 @@ public class RamKickAuthority : MonoBehaviour
     public float kickZoneHeight = 0.9f;             // от ступней вверх: выше «колена/бедра» не бьём
     public float kickZoneForward = 0.2f;            // смещение центра зоны вперёд по корпусу
     public float kickCooldown = 2f;                 // отдельный от дробовика
-    public float kickSpeed = 7f;                    // м/с горизонтально (до множителя тира)
-    public float kickLift = 3.5f;
-    public float kickSpin = 9f;                     // рад/с хаотичного вращения
+    public float kickSpeed = 8f;                    // м/с горизонтально (до множителя тира); было 7 — по просьбе владельца немного дальше (9,5 давало до 16 м — через весь зал)
+    public float kickLift = 5f;                     // было 3,5: выше дуга, дольше полёт — «смешнее»
+    public float kickSpin = 16f;                    // рад/с хаотичного вращения (было 9): кувыркается заметнее
+    public float kickSideJitter = 15f;              // ° случайного отклонения вбок: каждый пинок летит немного по-своему
+    public float kickBounciness = 0.55f;            // упругость предмета в полёте (было 0,35): отскакивает от пола и стен
     public float stunDuration = 3f;                 // полный таймер оглушения от момента пинка
     public float flightMaxTime = 6f;                // только страховка от застрявшей физики; обычно фазу 1 завершает проверка «осел»
     public float settleSpeed = 0.15f;               // «осел»: линейная скорость ниже, м/с
@@ -101,6 +103,7 @@ public class RamKickAuthority : MonoBehaviour
         res.hit = true;
         Vector3 away = victim.BodyCenter - feet; away.y = 0f;
         Vector3 dir = away.sqrMagnitude < 1e-4 ? bodyFwd : away.normalized;
+        dir = Quaternion.Euler(0f, Random.Range(-kickSideJitter, kickSideJitter), 0f) * dir;
         float f = KickFactor(victim.CurrentProp.tier);
         Vector3 launch = dir * kickSpeed * f + Vector3.up * kickLift * Mathf.Lerp(1f, f, 0.5f);
         Vector3 spin = Random.onUnitSphere * kickSpin;

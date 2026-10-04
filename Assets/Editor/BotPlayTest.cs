@@ -493,7 +493,7 @@ public static class BotPlayTest
     public static void StartScenario(string name)
     {
         log.Clear();
-        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : name == "group" ? MainGroup() : name == "ram" ? MainMorphRam() : name == "new" ? MainNew() : name == "rg" ? MainRG() : name == "pick" ? MainPick() : name == "align" ? MainAlign() : name == "pa" ? MainPA() : null;
+        run = name == "chase" ? MainChase() : name == "shelf" ? MainShelf() : name == "weave" ? MainWeave() : name == "all" ? MainAll() : name == "wc" ? MainWC() : name == "air" ? MainAir() : name == "group" ? MainGroup() : name == "ram" ? MainMorphRam() : name == "new" ? MainNew() : name == "rg" ? MainRG() : name == "pick" ? MainPick() : name == "align" ? MainAlign() : name == "pa" ? MainPA() : name == "hunt" ? MainHunt() : name == "trio" ? MainTrio() : null;
         if (run != null) EditorApplication.update += Tick;
     }
 
@@ -787,6 +787,247 @@ public static class BotPlayTest
         yield return MainAlign();
     }
 
+    // Реалистичная охота: охотник видит только то, что в прямой видимости, идёт к последнему месту цели, раз в 2,5 с стреляет
+    // мимо цели (near-miss), бродит, если никого не видно. 60 с. Ловим «остановки» ботов в активных состояниях:
+    // скорость < 0,25 м/с дольше 0,8 с — с состоянием, нажат ли ввод (упёрся) или стоит сознательно, видит ли охотник.
+    class Stop { public float t0, t1; public string state, note; public Vector3 pos; public bool pressing; public float hunterD; public bool seen; }
+    static IEnumerator MainHunt()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        foreach (var b in bots) { b.Trail.Clear(); b.Diag = new StringBuilder(); }
+        var spawn = CombatAuthority.Instance != null && CombatAuthority.Instance.hunterSpawn != null ? CombatAuthority.Instance.hunterSpawn.position : new Vector3(0f, 0.05f, -5.5f);
+        PlaceHunter(spawn, spawn + Vector3.forward);
+        HiderBot target = null; Vector3 lastSeen = default; bool haveLast = false; float nextShot = 0f; Vector3 wander = default; float wanderUntil = 0f;
+        HiderBot suspect = null; float suspectUntil = 0f;   // «подозреваемый»: игрок идёт проверять конкретный предмет
+        var prev = bots.ToDictionary(b => b, b => b.Hider.transform.position);
+        var slowSince = bots.ToDictionary(b => b, b => -1f);
+        var open = bots.ToDictionary(b => b, b => (Stop)null);
+        var stops = bots.ToDictionary(b => b, b => new List<Stop>());
+        int shots = 0, lastF = -1;
+        float t0 = Time.time;
+        var path = new NavMeshPath();
+        while (Time.time - t0 < 90f)
+        {
+            if (Time.frameCount == lastF) { yield return null; continue; }
+            lastF = Time.frameCount;
+            float dt = Time.deltaTime;
+            Vector3 eye = HunterEye(hunter.transform.position);
+            // подозреваемый меняется раз в 12 с (или если пойман); к нему идём, пока не увидим; увидели — цель
+            if (suspect == null || suspect.Hider.Caught || Time.time > suspectUntil)
+            {
+                var alive = bots.Where(b => b != null && !b.Hider.Caught).ToList();
+                if (alive.Count > 0) { suspect = alive[Random.Range(0, alive.Count)]; suspectUntil = Time.time + 12f; target = suspect; haveLast = false; }
+            }
+            bool targetSeen = target != null && !target.Hider.Caught && Visible(eye, target.Hider);
+            if (targetSeen) { lastSeen = target.Hider.transform.position; haveLast = true; }
+            Vector3 goal;
+            if (targetSeen) goal = target.Hider.transform.position;
+            else if (!haveLast && target != null && !target.Hider.Caught && Time.time < suspectUntil - 6f) goal = target.Hider.transform.position;   // ещё не видел: идёт к подозрительному месту
+            else if (haveLast) { goal = lastSeen; if (Vector3.Distance(Flat2(goal), Flat2(hunter.transform.position)) < 0.8f) haveLast = false; }
+            else
+            {
+                if (Time.time > wanderUntil) { NavMesh.SamplePosition(new Vector3(Random.Range(-8f, 8f), 0.05f, Random.Range(-5f, 3.5f)), out var wh, 2f, HumanoidFilter); wander = wh.position; wanderUntil = Time.time + 5f; }
+                goal = wander;
+            }
+            if (NavMesh.SamplePosition(goal, out var gh, 3f, HumanoidFilter)) goal = gh.position;
+            Vector3 hp = hunter.transform.position;
+            if (Vector3.Distance(Flat2(goal), Flat2(hp)) > 1.6f && NavMesh.CalculatePath(hp, goal, HumanoidFilter, path) && path.corners.Length > 1)
+            {
+                Vector3 d = path.corners[1] - hp; d.y = 0f;
+                hunter.GetComponent<CharacterController>().Move(d.normalized * hunter.walkSpeed * dt);
+            }
+            if (targetSeen) hunter.AimAt(Center(target.Hider));
+            // выстрел мимо цели раз в 2,5 с, если видна и ближе 9 м
+            if (targetSeen && Time.time >= nextShot && Vector3.Distance(hp, target.Hider.transform.position) < 9f)
+            {
+                hunter.NextShotTime = 0f;
+                if (NearMissAim(target.Hider, hunter.EyePosition, out var aim)) { hunter.AimAt(aim); hunter.Fire(); shots++; }
+                nextShot = Time.time + 2.5f;
+            }
+            // остановки ботов
+            foreach (var b in bots)
+            {
+                if (b == null || b.Hider.Caught) continue;
+                Vector3 q = b.Hider.transform.position;
+                float sp = dt > 0f ? Vector3.Distance(Flat2(q), Flat2(prev[b])) / dt : 0f;
+                prev[b] = q;
+                bool active = b.Current == HiderBot.State.Flee || b.Current == HiderBot.State.Relocate || b.Current == HiderBot.State.Look || b.Current == HiderBot.State.Reacting || b.Current == HiderBot.State.Ram;
+                if (active && sp < 0.25f && !b.LinkActive)
+                {
+                    if (slowSince[b] < 0f) slowSince[b] = Time.time;
+                    if (Time.time - slowSince[b] >= 0.8f)
+                    {
+                        if (open[b] == null) { open[b] = new Stop { t0 = slowSince[b], pos = q, state = b.Current.ToString(), hunterD = Vector3.Distance(q, hunter.transform.position), seen = Visible(eye, b.Hider), note = "" }; stops[b].Add(open[b]); }
+                        var s = open[b];
+                        s.t1 = Time.time;
+                        if (!s.state.Contains(b.Current.ToString())) s.state += "/" + b.Current;
+                        if (b.Hider.botInput.move.sqrMagnitude > 0.01f) s.pressing = true;
+                    }
+                }
+                else
+                {
+                    if (open[b] != null) { open[b].note = $"холд {b.HoldCount}, загнан {b.CorneredCount}, {b.LastLinkLog}; журнал: {string.Join(" | ", b.Trail.Skip(Mathf.Max(0, b.Trail.Count - 3)))}"; open[b] = null; }
+                    slowSince[b] = -1f;
+                }
+            }
+            yield return null;
+        }
+        L($"hunt: 90 с, выстрелов {shots}");
+        foreach (var b in bots)
+        {
+            var list = stops[b];
+            float total = list.Sum(s => s.t1 - s.t0);
+            L($"   {b.name} ({(b.Hider.Caught ? "пойман" : b.Hider.CurrentProp.ModelId)}): остановок в активных состояниях {list.Count}, всего {total:F1} с, из них «упёрся» (ввод нажат) {list.Count(s => s.pressing)}");
+            var diag = b.Diag.ToString().Split('\n');
+            int shown = 0;
+            foreach (var s in list.OrderByDescending(s => s.t1 - s.t0).Take(6))
+            {
+                L($"      {s.t0 - t0:F1}–{s.t1 - t0:F1} с ({s.t1 - s.t0:F1} с) {s.state} {(s.pressing ? "УПЁРСЯ" : "стоит")} pos ({s.pos.x:F2};{s.pos.y:F2};{s.pos.z:F2}) охотник {s.hunterD:F1} м видит={s.seen}; {s.note}");
+                if (shown++ >= 3) continue;
+                // кадры: 0,6 с до начала остановки и первые 0,8 с в ней
+                var fr = diag.Where(x => x.Length > 6 && float.TryParse(x.Split(' ')[0], out var ft) && ft >= s.t0 - 0.6f && ft <= s.t0 + 0.8f).ToList();
+                for (int k2 = 0; k2 < fr.Count; k2 += Mathf.Max(1, fr.Count / 14)) L("         " + fr[k2].TrimEnd());
+            }
+        }
+    }
+
+    static IEnumerator MainTrio()
+    {
+        yield return MainRamFar();
+        L("==========");
+        yield return MainAttention();
+        L("==========");
+        yield return MainKickFun();
+    }
+
+    // Ответный удар «в общем при побеге»: мелкий бот в ~5 м от крупного предмета (вне досягаемости смены облика), near-miss.
+    static IEnumerator MainRamFar()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        int n = 0;
+        foreach (var big in Prop.All.Where(pp => pp.IsFree && pp.tier >= PropTier.Medium && !pp.OnShelf).Take(3).ToList())
+        {
+            var b = bots[n % bots.Count]; n++;
+            if (b.Hider.Caught) continue;
+            var small = FreeModel("Snack") ?? Prop.All.FirstOrDefault(pp => pp.IsFree && pp.tier <= PropTier.Small);
+            if (small == null) { L("ramfar: нет мелкого"); continue; }
+            Morph(b.Hider, small);
+            SetField(b.Hider, "<NextRepossessTime>k__BackingField", 0f);
+            Vector3 bp = big.transform.position; Vector3 dirIn = Flat2(-bp).normalized;
+            if (!NavMesh.SamplePosition(bp + dirIn * (big.footRadius + 5f), out var nh, 1.5f, HumanoidFilter)) { L($"ramfar: нет места у {big.ModelId}"); continue; }
+            Teleport(b.Hider, nh.position);
+            yield return Wait(0.3f);
+            float tb = Time.time; while (b.Hider.Boost != HiderPlayer.BoostPhase.Ready && Time.time - tb < 20f) yield return null;
+            if (!FindView(b.Hider, 3.5f, 5.5f, out var hp)) { L("ramfar: нет точки обзора"); continue; }
+            PlaceHunter(hp, Center(b.Hider));
+            hunter.KnockImmuneUntil = 0f;
+            float mr0 = b.personality.morphRamChance; b.personality.morphRamChance = 1f;
+            int m0 = b.MorphRams, r0 = b.RamCount, rb0 = b.RunsToBig;
+            float reach0 = Vector3.Distance(b.Hider.EyePosition, big.Colliders[0].bounds.ClosestPoint(b.Hider.EyePosition));
+            yield return Wait(0.3f);
+            b.Hider.OnNearMiss(4f);
+            var seq = new List<string> { b.Current.ToString() };
+            float t0 = Time.time; bool knocked = false;
+            while (Time.time - t0 < 7f)
+            {
+                if (seq[seq.Count - 1] != b.Current.ToString()) seq.Add(b.Current.ToString());
+                if (hunter.Knocked) knocked = true;
+                yield return null;
+            }
+            b.personality.morphRamChance = mr0;
+            L($"ramfar у {big.ModelId}: до предмета было {reach0:F1} м (досягаемость смены 3,7); бежал к крупному +{b.RunsToBig - rb0}, превращений +{b.MorphRams - m0}, таранов +{b.RamCount - r0}, облик {b.Hider.CurrentProp.ModelId}, охотник сбит {knocked}; {string.Join("->", seq)}");
+            float tw = Time.time; while (hunter.Knocked && Time.time - tw < 8f) yield return null;
+            yield return Wait(1f);
+        }
+    }
+
+    // Внимание: бот A — цель, бот B рядом (~1,2 м). Выстрел мимо A со стороны, противоположной B. Ждём: A бежит, B остаётся.
+    // Контроль: выстрел мимо B — B бежит.
+    static IEnumerator MainAttention()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        for (int trial = 0; trial < 3; trial++)
+        {
+            var A = bots[(trial * 2) % bots.Count]; var B = bots[(trial * 2 + 1) % bots.Count];
+            foreach (var bb in new[] { A, B }) { var sm = FreeModel("Snack") ?? Prop.All.FirstOrDefault(pp => pp.IsFree && pp.tier <= PropTier.Small); if (sm != null) Morph(bb.Hider, sm); bb.personality.morphRamChance = 0f; bb.personality.ramChance = 0f; }
+            Vector3 c0 = new Vector3(-0.8f + trial * 0.8f, 0.05f, -3.4f);
+            NavMesh.SamplePosition(c0, out var a0, 1f, HumanoidFilter); NavMesh.SamplePosition(c0 + new Vector3(0f, 0f, -1.1f), out var b0, 1f, HumanoidFilter);
+            Teleport(A.Hider, a0.position); Teleport(B.Hider, b0.position);
+            yield return Wait(1.5f);   // в Freeze
+            foreach (var bb in new[] { A, B }) if (bb.Current != HiderBot.State.Freeze) SetField(bb, "<Current>k__BackingField", HiderBot.State.Freeze);
+            Vector3 hpos = a0.position + new Vector3(-5.5f, 0f, 0f);
+            if (NavMesh.SamplePosition(hpos, out var hh, 1.5f, HumanoidFilter)) PlaceHunter(hh.position, Center(A.Hider));
+            yield return Wait(0.5f);
+            // прицел: мимо A на 1 м, в сторону от B
+            Vector3 eye = hunter.EyePosition, ca = Center(A.Hider), toA = (ca - eye).normalized;
+            Vector3 side = Vector3.Cross(Vector3.up, toA).normalized;
+            if (Vector3.Dot(side, B.Hider.transform.position - A.Hider.transform.position) > 0f) side = -side;
+            hunter.AimAt(ca + side * 0.35f);   // дробь проходит в ~0,3 м от A — near-miss по A, B в ~1,4 м от линии
+            int ia0 = A.IgnoredNearMisses, ib0 = B.IgnoredNearMisses;
+            float da0 = A.DetectedAt, db0 = B.DetectedAt;
+            hunter.NextShotTime = 0f; hunter.Fire();
+            yield return Wait(1.5f);
+            bool aRan = A.DetectedAt > da0, bRan = B.DetectedAt > db0;
+            L($"attention #{trial + 1} выстрел мимо A ({A.name}) со стороны от B ({B.name}, в 1,1 м сбоку): A побежал={aRan} (угол {A.LastShotAngle:F1}° допуск {A.LastShotAllow:F1}°), B побежал={bRan} (угол {B.LastShotAngle:F1}° допуск {B.LastShotAllow:F1}°), B проигнорировал near-miss +{B.IgnoredNearMisses - ib0}");
+            // контроль: выстрел мимо B
+            if (!bRan && B.Current == HiderBot.State.Freeze)
+            {
+                yield return Wait(1f);
+                Vector3 cb = Center(B.Hider); Vector3 toB = (cb - hunter.EyePosition).normalized; Vector3 sideB = Vector3.Cross(Vector3.up, toB).normalized;
+                if (Vector3.Dot(sideB, A.Hider.transform.position - B.Hider.transform.position) > 0f) sideB = -sideB;
+                hunter.AimAt(cb + sideB * 0.35f);
+                float db1 = B.DetectedAt;
+                hunter.NextShotTime = 0f; hunter.Fire();
+                yield return Wait(1.5f);
+                L($"   контроль: выстрел мимо B — B побежал={B.DetectedAt > db1} (угол {B.LastShotAngle:F1}° допуск {B.LastShotAllow:F1}°)");
+            }
+            yield return Wait(4f);
+        }
+    }
+
+    // Пинок: тот же пинок по Can/Snack/Box со старыми и новыми параметрами — дальность, высота, время до «осел».
+    static IEnumerator MainKickFun()
+    {
+        yield return Ready();
+        var bots = HiderBot.All.OrderBy(b => b.name).ToList();
+        var ka = RamKickAuthority.Instance;
+        var cfg = new[] { ("старый", 7f, 3.5f, 9f, 0.35f, 0f), ("новый", ka.kickSpeed, ka.kickLift, ka.kickSpin, ka.kickBounciness, ka.kickSideJitter) };
+        foreach (var (label, sp, lift, spin, bounce, jit) in cfg)
+        {
+            ka.kickSpeed = sp; ka.kickLift = lift; ka.kickSpin = spin; ka.kickBounciness = bounce; ka.kickSideJitter = jit;
+            foreach (var model in new[] { "Can", "Snack", "Box" })
+            {
+                var b = bots.First(x => x != null && !x.Hider.Caught);
+                b.enabled = false; b.Hider.botInput.move = Vector2.zero;
+                var sample = FreeModel(model) ?? Prop.All.FirstOrDefault(pp => pp.ModelId == model);
+                Morph(b.Hider, sample);
+                NavMesh.SamplePosition(new Vector3(-6.5f, 0.05f, -3.3f), out var st, 1f, HumanoidFilter);
+                Teleport(b.Hider, st.position);
+                PlaceHunter(st.position + new Vector3(-0.55f, 0f, 0f), st.position + Vector3.right * 3f);
+                hunter.SetControlled(false);
+                yield return Wait(0.6f);
+                hunter.NextKickTime = 0f;
+                Vector3 p0 = b.Hider.CurrentProp.transform.position;
+                hunter.Kick();
+                float t0 = Time.time, maxH = 0f, maxD = 0f; bool kicked = false;
+                while (Time.time - t0 < 6f)
+                {
+                    if (b.Hider.Stun == HiderPlayer.StunPhase.Flight) { kicked = true; var q = b.Hider.CurrentProp.transform.position; maxH = Mathf.Max(maxH, q.y - p0.y); maxD = Mathf.Max(maxD, Vector3.Distance(Flat2(q), Flat2(p0))); }
+                    else if (kicked) break;
+                    yield return null;
+                }
+                var end = b.Hider.CurrentProp.transform.position;
+                L($"kick {label} ({sp}/{lift}/спин {spin}/упругость {bounce}/разброс {jit}°) {model}: сработал={kicked}, улетел на {Vector3.Distance(Flat2(end), Flat2(p0)):F1} м (макс {maxD:F1}), выше старта на {maxH:F2} м, полёт до «осел» {Time.time - t0:F2} с");
+                float tw = Time.time; while (b.Hider.Stun != HiderPlayer.StunPhase.None && Time.time - tw < 6f) yield return null;
+                yield return Wait(0.5f);
+            }
+        }
+        foreach (var b in Object.FindObjectsByType<HiderBot>(FindObjectsInactive.Include, FindObjectsSortMode.None)) b.enabled = true;
+    }
+
     static IEnumerator MainRG()
     {
         yield return MainMorphRam();
@@ -920,7 +1161,7 @@ public static class BotPlayTest
                     bool vis = Visible(HunterEye(hunter.transform.position), b.Hider);
                     float d = Vector3.Distance(hunter.transform.position, b.Hider.transform.position);
                     trans.Add($"   +{Time.time - t0:F2} {last} -> {b.Current}: охотник виден (тест, статика без своих коллайдеров)={vis}, дист {d:F2}");
-                    if (last == HiderBot.State.Flee && vis && b.Current != HiderBot.State.Ram) falseSafe++;
+                    if (last == HiderBot.State.Flee && vis && b.Current != HiderBot.State.Ram && b.Current != HiderBot.State.Morphing) falseSafe++;   // смена облика ради тарана — не «спрятался»
                     last = b.Current;
                 }
                 if ((b.Current == HiderBot.State.Freeze || b.Current == HiderBot.State.Look || b.Current == HiderBot.State.Settle)

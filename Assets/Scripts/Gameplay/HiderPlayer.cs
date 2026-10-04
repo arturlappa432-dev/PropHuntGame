@@ -555,7 +555,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
         propRb.angularDamping = 0.8f;   // иначе банка катится бесконечно (в PhysX нет сопротивления качению)
         propRb.linearDamping = 0.1f;
         propRb.maxAngularVelocity = 20f;
-        var mat = new PhysicsMaterial { bounciness = 0.35f, dynamicFriction = 0.5f, staticFriction = 0.6f, bounceCombine = PhysicsMaterialCombine.Maximum };
+        var mat = new PhysicsMaterial { bounciness = a.kickBounciness, dynamicFriction = 0.5f, staticFriction = 0.6f, bounceCombine = PhysicsMaterialCombine.Maximum };
         bool round = false;
         foreach (var c in prop.Colliders)
             if (c is CapsuleCollider || c is SphereCollider || prop.ModelId == "Can" || prop.ModelId == "Basket") round = true;
@@ -672,6 +672,15 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     }
 
     // near-miss: свист слышит только этот прячущийся (2D-звук); игровых последствий нет (буст только от Z, hunter-combat.md).
+    // Откуда и куда был выстрел, давший последний near-miss (его направление видно по прицелу охотника — честная информация).
+    public Vector3 LastShotOrigin { get; private set; }
+    public Vector3 LastShotDir { get; private set; }
+    public void OnNearMiss(float hunterDistance, Vector3 shotOrigin, Vector3 shotDir)
+    {
+        LastShotOrigin = shotOrigin; LastShotDir = shotDir.normalized;
+        OnNearMiss(hunterDistance);
+    }
+
     public void OnNearMiss(float hunterDistance)
     {
         if (Caught) return;
