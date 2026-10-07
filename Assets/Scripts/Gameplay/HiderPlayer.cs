@@ -46,6 +46,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public Vector3 BodyCenter => Stun != StunPhase.None && CurrentProp != null ? CurrentProp.transform.position : transform.position + Vector3.up * BodyHeight * 0.5f;
     public Vector3 HorizontalVelocity { get { var v = cc.velocity; v.y = 0f; return v; } }
     public bool Grounded => cc != null && cc.enabled && cc.isGrounded;
+    public bool JumpWindingUp => windup >= 0f;   // присед перед отрывом: прыжок уже нажат, но ещё на земле
     public float BodyRadius => cc != null ? cc.radius : 0.25f;
     public float PropYaw => propYaw;   // поворот предмета-тела (Q/E), мировой yaw: корень тела не вращается
     public enum StunPhase { None, Flight, Out, Realign }   // пинок: кувырок -> «в отключке» (звёзды) -> самовыравнивание

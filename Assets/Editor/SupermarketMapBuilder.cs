@@ -46,6 +46,8 @@ public static class SupermarketMapBuilder
         Box("Wall_S_L", shell, new Vector3(-(doorW / 2 + sideW / 2), H / 2, -D / 2 - WallT / 2), new Vector3(sideW + WallT, H, WallT), wallM);
         Box("Wall_S_R", shell, new Vector3(doorW / 2 + sideW / 2, H / 2, -D / 2 - WallT / 2), new Vector3(sideW + WallT, H, WallT), wallM);
         Box("Wall_S_Lintel", shell, new Vector3(0, doorH + (H - doorH) / 2, -D / 2 - WallT / 2), new Vector3(doorW, H - doorH, WallT), wallM);
+        // Закрытые двери входа: за проёмом пустота, и игроки/боты выходили из зала и падали с карты.
+        Box("Entrance_Doors", shell, new Vector3(0, doorH / 2, -D / 2 - WallT / 2), new Vector3(doorW, doorH, 0.1f), backM);
 
         // Подсобка: перегородка с дверью 1.2 м ближе к правому краю
         float bd = 1.2f, bx = 6f;

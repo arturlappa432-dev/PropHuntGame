@@ -29,10 +29,11 @@ public class BotPersonality
     public float noticeRange = 16f;       // дальше этого охотника бот не замечает; ближе и в прямой видимости — не двигается сам
     public float morphRamChance = 0.3f;   // шанс при побеге резко сменить облик на средний/крупный предмет и сразу таранить (Z)
     public float coverWeight = 2.5f;      // выбор предмета: насколько важна укрытость места (осторожный выше, наглый ниже)
-    public float attentionAngle = 12f;    // near-miss: бежать, только если выстрел был направлен на бота в пределах этого угла (°)
+    public float attentionMargin = 0.4f;  // near-miss: «в меня», если дробь прошла не дальше ближайшего другого предмета + этот запас, м
+    public float jumpEveryMin = 0.7f, jumpEveryMax = 1.4f;   // с между прыжками уклонения при погоне (наглый прыгает чаще)
 
-    public static BotPersonality Cautious() => new BotPersonality { name = "Cautious", reactionDelay = 0.25f, safeDistance = 10f, ramChance = 0.15f, relocateEvery = 45f, noticeRange = 16f, morphRamChance = 0.3f, coverWeight = 2.5f, attentionAngle = 12f };
-    public static BotPersonality Bold() => new BotPersonality { name = "Bold", reactionDelay = 0.6f, safeDistance = 7f, ramChance = 0.7f, relocateEvery = 20f, noticeRange = 8f, morphRamChance = 0.75f, coverWeight = 1.0f, attentionAngle = 7f };
+    public static BotPersonality Cautious() => new BotPersonality { name = "Cautious", reactionDelay = 0.25f, safeDistance = 10f, ramChance = 0.15f, relocateEvery = 45f, noticeRange = 16f, morphRamChance = 0.3f, coverWeight = 2.5f, attentionMargin = 0.4f, jumpEveryMin = 0.7f, jumpEveryMax = 1.4f };
+    public static BotPersonality Bold() => new BotPersonality { name = "Bold", reactionDelay = 0.6f, safeDistance = 7f, ramChance = 0.7f, relocateEvery = 20f, noticeRange = 8f, morphRamChance = 0.75f, coverWeight = 1.0f, attentionMargin = 0.15f, jumpEveryMin = 0.35f, jumpEveryMax = 0.9f };
 }
 
 // Бот-прячущийся (docs/systems/bots.md). Три слоя:
@@ -130,7 +131,7 @@ public class HiderBot : MonoBehaviour
     int relocateRetries;
     float zigT, zigDur = 0.6f, zigAmp = 1f, zigSign = 1f, nextRamRollAt;
     bool morphThenRam;
-    public int MorphRams, ZigJumps;
+    public int MorphRams, ZigJumps, AimedJumps;
     string morphRamWhy = "";
     public bool RecordWhy;   // тест: включить запись причин (в игре строки не собираются)
     public string MorphRamWhy { get => morphRamWhy; set { if (RecordWhy && value != lastWhy) { lastWhy = value; morphRamWhy = (morphRamWhy.Length > 0 ? morphRamWhy + " / " : "") + $"{Time.time:F1}: {value}"; if (morphRamWhy.Length > 400) morphRamWhy = morphRamWhy.Substring(morphRamWhy.Length - 400); } } }   // тест: история причин
@@ -218,22 +219,37 @@ public class HiderBot : MonoBehaviour
     public int IgnoredNearMisses;
     float nervousUntil = -100f;
 
-    // Выстрел был в бота: охотник его видит и направление выстрела в пределах угла внимания от направления на бота.
-    // Вблизи допуск шире (разброс и неточность прицела): не меньше atan(0,6 м / дистанция). После испуга — нервнее (×1,5).
+    // Выстрел был в бота? Как рассуждает человек: охотник стрелял в тот предмет, мимо которого дробь прошла ближе всего.
+    // Бот видит все предметы (какие из них игроки — не знает, это честно). Если линия выстрела прошла ближе к другому
+    // предмету — стреляли в него; если ближе всего ко мне (с запасом личности) или вплотную (≤ 0,6 м) — в меня.
+    // Охотник бота не видит (видимость симметрична) — не в меня. После испуга запас ×1,5 (нервнее).
+    // Раньше был угол прицела: вблизи (охотник в метре) он огромный, и бот пропускал явные выстрелы в себя.
     bool ShotWasAtMe()
     {
         if (!ThreatVisible) return false;
-        Vector3 dir = hider.LastShotDir;
+        Vector3 dir = hider.LastShotDir, o = hider.LastShotOrigin;
         if (dir.sqrMagnitude < 0.5f) return true;   // направление неизвестно — по-старому
-        Vector3 to = hider.BodyCenter - hider.LastShotOrigin;
-        float d = to.magnitude;
-        float ang = Vector3.Angle(dir, to);
-        float allow = Mathf.Max(personality.attentionAngle, Mathf.Atan2(0.6f, Mathf.Max(0.5f, d)) * Mathf.Rad2Deg);
-        if (Time.time < nervousUntil) allow *= 1.5f;
-        LastShotAngle = ang; LastShotAllow = allow;
-        return ang <= allow;
+        float mine = MissDistance(o, dir, hider.BodyCenter);
+        float margin = personality.attentionMargin * (Time.time < nervousUntil ? 1.5f : 1f);
+        float other = float.MaxValue;
+        foreach (var q in Prop.All)
+        {
+            if (q == hider.CurrentProp || q.Colliders.Length == 0 || !q.gameObject.activeInHierarchy) continue;
+            float m = MissDistance(o, dir, q.Colliders[0].bounds.center);
+            if (m < other) other = m;
+        }
+        LastShotAngle = mine; LastShotAllow = other;
+        return mine <= 0.6f || mine <= other + margin;
     }
-    public float LastShotAngle, LastShotAllow;   // тест
+
+    // Расстояние от точки до луча выстрела (позади стрелка — бесконечность).
+    static float MissDistance(Vector3 o, Vector3 dir, Vector3 p)
+    {
+        float t = Vector3.Dot(p - o, dir);
+        if (t < 0f) return float.MaxValue;
+        return Vector3.Distance(p, o + dir * t);
+    }
+    public float LastShotAngle, LastShotAllow;   // тест: промах мимо меня и мимо ближайшего другого предмета, м
 
     // ---------- Основной цикл ----------
 
@@ -999,6 +1015,7 @@ public class HiderBot : MonoBehaviour
             // Не видим, а все пути ведут мимо охотника (напр. бот в ячейке полки, охотник рядом): затаиться, не выдавать себя бегом.
             // Но не стоя на чужом теле/предмете (неудачный прыжок) — оттуда лучше рвануть; а затаившись дольше 3 с незамеченным,
             // побег кончается: на маленькой карте охотник почти всегда ближе safeDistance, и бот «держался» десятки секунд.
+            else if (OnSomething() && StepOff()) { holdSince = -1f; }
             else if (!ThreatVisible && !OnSomething())
             {
                 if (holdSince < 0f) holdSince = Time.time;
@@ -1011,6 +1028,40 @@ public class HiderBot : MonoBehaviour
     }
 
     void EndFlee(string why) { FleeEndReason = why; lastFleeEndAt = Time.time; }
+
+    public int StepOffs;
+
+    // Сойти с чужого предмета/тела на соседнюю свободную точку своего навмеша (тот же уровень или ниже), как сделал бы игрок:
+    // после неудачного приземления в ячейку полки бот стоял на корзине десятки секунд — пути «от охотника» не находилось.
+    bool StepOff()
+    {
+        Vector3 pos = hider.transform.position;
+        float step = VisualRadius + 0.35f;
+        Vector3 away = haveThreat ? Flat(pos - threatPos) : Vector3.forward;
+        float baseYaw = away.sqrMagnitude > 1e-4f ? Mathf.Atan2(away.x, away.z) * Mathf.Rad2Deg : 0f;
+        for (int k = 0; k < 8; k++)
+        {
+            float yaw = baseYaw + ((k & 1) == 0 ? 1 : -1) * ((k + 1) / 2) * 45f;
+            Vector3 p = pos + Quaternion.Euler(0f, yaw, 0f) * Vector3.forward * step;
+            if (!NavMesh.SamplePosition(p, out var nh, 0.35f, Filter)) continue;
+            Vector3 q = nh.position;
+            if (q.y > pos.y + 0.05f || pos.y - q.y > 0.6f || FlatDist(q, pos) < 0.25f) continue;
+            // под точкой нет предмета или тела
+            bool blocked = false;
+            int n = Physics.RaycastNonAlloc(q + Vector3.up * 0.3f, Vector3.down, rayBuf, 0.35f, ~0, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < n && !blocked; i++)
+            {
+                var c = rayBuf[i].collider;
+                if (c.transform.IsChildOf(hider.transform)) continue;
+                if (c.GetComponentInParent<Prop>() != null || c.GetComponentInParent<HiderPlayer>() != null) blocked = true;
+            }
+            if (blocked) continue;
+            corners = new[] { q }; ci = 0; linkIdx = -1; dropping = false; stuckT = 0f; lastPos = pos;
+            StepOffs++;
+            return true;
+        }
+        return false;
+    }
 
     // Ответный удар посреди побега: охотник близко и видит бота, Z готов. Уже средний/крупный — таран с шансом ramChance;
     // мелкий — резко сменить облик на средний/крупный предмет рядом (обычная смена облика: кулдаун, дистанция, вид) и сразу таранить.
@@ -1065,6 +1116,22 @@ public class HiderBot : MonoBehaviour
         return true;
     }
 
+    // Видимое тело образца (его коробка габаритов) на месте бота ничего не задевает: ни статику, ни предметы, ни чужие тела.
+    bool VisualFits(Prop q)
+    {
+        if (q.Colliders.Length == 0) return true;
+        Vector3 size = q.Colliders[0].bounds.size;
+        Vector3 c = hider.transform.position + Vector3.up * (q.height * 0.5f + 0.01f);
+        int n = Physics.OverlapBoxNonAlloc(c, new Vector3(size.x * 0.45f, q.height * 0.5f - 0.015f, size.z * 0.45f), overlapBuf, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < n; i++)
+        {
+            var t = overlapBuf[i].transform;
+            if (t.IsChildOf(hider.transform) || overlapBuf[i].GetComponentInParent<HunterPlayer>() != null) continue;
+            return false;
+        }
+        return true;
+    }
+
     // Тело образца помещается на месте бота (без статики и чужих тел) — иначе крупный облик войдёт в стеллаж.
     bool BodyFits(Prop q)
     {
@@ -1093,7 +1160,11 @@ public class HiderBot : MonoBehaviour
             if (to.sqrMagnitude > 0.01f)
             {
                 float yaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
-                if (JumpCorridorClear(yaw, FlightLength())) { input.yaw = yaw; input.PressJump(); }
+                if (JumpCorridorClear(yaw, FlightLength()))
+                {
+                    input.yaw = yaw; input.PressJump();
+                    airLock = true; airYaw = yaw; airLockAt = Time.time; airFrom = hider.transform.position; airSway = 0f; airBaseOffset = WeaveOffset;
+                }
             }
         }
     }
@@ -1194,7 +1265,7 @@ public class HiderBot : MonoBehaviour
     // Свободное место под тело на уровне полки (без предметов и чужих тел).
     bool FreeSpot(Vector3 p)
     {
-        float r = hider.BodyRadius + 0.03f, h = hider.BodyHeight * 0.5f;
+        float r = VisualRadius + 0.03f, h = hider.BodyHeight * 0.5f;   // по видимому размеру тела, не по капсуле
         var cols = Physics.OverlapBox(p + Vector3.up * (h + 0.01f), new Vector3(r, h - 0.005f, r), Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
         foreach (var c in cols)
         {
@@ -1250,6 +1321,8 @@ public class HiderBot : MonoBehaviour
 
     void DecideSettle()
     {
+        // встал на чужой предмет (неудачный прыжок на полку) — сразу шаг на свободное место рядом, а не замирать сверху
+        if (OnSomething() && StepOff()) { SetState(State.Relocate); return; }
         input.move = Vector2.zero;
         wantMorphCheck = true;   // сменить облик под окружение, как только кулдаун позволит
         EnterFreeze();
@@ -1262,6 +1335,31 @@ public class HiderBot : MonoBehaviour
 
     // Место для затаивания плохое: стоит на чужом теле или предмете (неудачный прыжок, бот на боте), не на своём навмеше
     // (верх стеллажа), мелкий предмет на голом полу без таких же рядом, крупный — посреди прохода без таких же рядом.
+    // Видимый радиус тела (по основанию), а не радиус капсулы: у плоских/широких предметов капсула уже модели
+    // (радиус не больше половины высоты), и тела ботов «влезали» друг в друга и в соседние предметы.
+    float VisualRadius => hider.CurrentProp != null ? Mathf.Max(hider.BodyRadius, hider.CurrentProp.footRadius) : hider.BodyRadius;
+
+    // Видимое тело пересекается с чужим предметом или телом другого прячущегося (тот спрятан внутри — при поимке/пинке «вылезает»).
+    public bool BodyOverlapsOthers()
+    {
+        var cur = hider.CurrentProp;
+        if (cur == null || cur.Colliders.Length == 0) return false;
+        var b = cur.Colliders[0].bounds;
+        int n = Physics.OverlapBoxNonAlloc(b.center, b.extents * 0.85f, overlapBuf, cur.transform.rotation, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < n; i++)
+        {
+            var c = overlapBuf[i];
+            if (c.transform.IsChildOf(hider.transform)) continue;
+            if (c.GetComponentInParent<HiderPlayer>() != null) return true;   // тело другого прячущегося — любое пересечение
+            var op = c.GetComponentInParent<Prop>();
+            if (op == null) continue;
+            // свободный предмет — только глубоко (один внутри другого): углы соседей на полке при начальной расстановке не в счёт
+            float deep = 0.6f * (VisualRadius + op.footRadius);
+            if (FlatDist(op.transform.position, cur.transform.position) < deep && Mathf.Abs(op.transform.position.y - cur.transform.position.y) < 0.3f) return true;
+        }
+        return false;
+    }
+
     // Стоит на чужом теле или предмете (неудачный прыжок, бот на боте)?
     public bool OnSomething()
     {
@@ -1285,6 +1383,7 @@ public class HiderBot : MonoBehaviour
         var cur = hider.CurrentProp;
         if (cur == null) return false;
         if (OnSomething()) return true;
+        if (BodyOverlapsOthers()) return true;   // внутри или наполовину в чужом предмете/теле
         // вплотную к другому прячущемуся — два одинаковых предмета, прижатых друг к другу, выдают обоих
         foreach (var h in HiderPlayer.All)
             if (h != hider && !h.Caught && FlatDist(h.transform.position, pos) < 0.6f && Mathf.Abs(h.transform.position.y - pos.y) < 0.15f) return true;   // на том же уровне (полка выше/ниже — не соседи)
@@ -1352,6 +1451,7 @@ public class HiderBot : MonoBehaviour
             if (q.Colliders.Length == 0 || Vector3.Distance(eye, q.Colliders[0].bounds.ClosestPoint(eye)) > reach) continue;
             int fit = LocalFit(pos, q.ModelId, cur);
             if (fit < bestFit || !ClearSight(eye, q)) continue;
+            if (!VisualFits(q)) continue;   // новое тело не должно влезть в соседний предмет/полку
             best = q; bestFit = fit;
         }
         if (best == null) return false;
@@ -1460,9 +1560,23 @@ public class HiderBot : MonoBehaviour
 
         // Куда смотреть: при побеге — точка впереди по пути + плавное смещение вбок; иначе (точная стоянка) — прямо на угол.
         Vector3 target = flee ? PursuitTarget(pos) : corners[ci];
+        // курс отрыва держится и во время приседа перед прыжком (0,1 с на земле): раньше блокировка снималась ещё на земле,
+        // курс в воздухе поворачивал за путём и дуга уходила на стеллаж (бот-банка садился на полку на 1–2 м)
+        if (hider.Grounded && !hider.JumpWindingUp && Time.time - airLockAt > 0.05f) airLock = false;
+        else if (flee && airLock && !FloorAhead(pos, airYaw)) airLock = false;   // впереди нет пола — рулить по пути, а не вылетать
+        else if (flee && airLock)
+        {
+            // в прыжке уклонения: вперёд по линии отрыва, вбок — изменение смещения виляния с момента отрыва, но не дальше
+            // проверенного коридором (иначе вместе с центровкой выходило до 1,5 м вбок и бот садился на полку)
+            Vector3 fwd = Quaternion.Euler(0f, airYaw, 0f) * Vector3.forward, side = Vector3.Cross(Vector3.up, fwd);
+            float along = Vector3.Dot(Flat(pos - airFrom), fwd);
+            float lateral = Mathf.Clamp(WeaveOffset - airBaseOffset, -airSway, airSway);
+            target = airFrom + fwd * (along + 1.5f) + side * lateral;
+        }
         Vector3 to = target - pos; to.y = 0f;
         // Скольжение вдоль стенки: впереди угол/стенка — курс вдоль поверхности (и чуть от неё), а не носом в неё.
         // Раньше бот срезал угол торца стеллажа, упирался в ребро почти перпендикулярно и стоял, «нажимая» вперёд, 2-9 с.
+        if (to.sqrMagnitude > 1e-6f && hider.Grounded) to = Separate(pos, to);
         if (to.sqrMagnitude > 1e-6f && SlideAlongWall(pos, to.normalized, to.magnitude, out var slid)) { input.yaw = Mathf.Atan2(slid.x, slid.z) * Mathf.Rad2Deg; }
         else if (flee)
         {
@@ -1488,6 +1602,29 @@ public class HiderBot : MonoBehaviour
     }
 
     public int Slides;   // тест: сколько кадров бот скользил вдоль стенки
+    public int Separations;
+
+    // Разведение: тело другого прячущегося на том же уровне ближе суммы видимых радиусов (+0,15 м) — курс уводится от него,
+    // иначе широкие тела проходили сквозь друг друга визуально (капсулы уже моделей) и прятали одно в другом.
+    Vector3 Separate(Vector3 pos, Vector3 to)
+    {
+        Vector3 push = Vector3.zero;
+        float myR = VisualRadius;
+        foreach (var h in HiderPlayer.All)
+        {
+            if (h == hider || h.Caught || h.CurrentProp == null) continue;
+            Vector3 d = Flat(pos - h.transform.position);
+            if (Mathf.Abs(h.transform.position.y - pos.y) > 0.3f) continue;
+            float need = myR + Mathf.Max(h.BodyRadius, h.CurrentProp.footRadius) + 0.15f;
+            float dist = d.magnitude;
+            if (dist >= need || dist < 1e-3f) continue;
+            push += d / dist * (1f - dist / need);
+        }
+        if (push.sqrMagnitude < 1e-4f) return to;
+        Separations++;
+        Vector3 dir = to.normalized + push * 1.5f;
+        return dir.normalized * to.magnitude;
+    }
 
     // Щуп телом вперёд на 0,3 м: при касании статики (или чужого тела) — направление вдоль поверхности к цели.
     bool SlideAlongWall(Vector3 pos, Vector3 dir, float toTarget, out Vector3 slid)
@@ -1617,29 +1754,77 @@ public class HiderBot : MonoBehaviour
 
     // Прыжки при побеге: только с пола, когда впереди и по бокам свободно и рядом нет перехода на полку
     // (иначе прыжок закидывает на полку). Виляние в воздухе продолжается тем же вводом.
+    // Прыжки уклонения, как у игрока под обстрелом: пока за ботом гонятся (охотник видит его или видел меньше 2 с назад),
+    // в ритме личности; если охотник целится прямо в бота (≤15°) — сразу. В воздухе курс держится на направлении отрыва
+    // (виляние вбок продолжается), поэтому поворот пути впереди не мешает: проверяются только коридор полёта и точка
+    // приземления на полу. Раньше бот прыгал лишь на прямом участке длиной в полёт — в проходах это почти не случалось.
     void EvadeJump()
     {
         if (dropping || linkIdx >= 0 || ci >= corners.Length) return;
-        // уклонение имеет смысл, только когда охотник видит бота и может стрелять; без него прыжок лишь привлекает внимание
-        if (Time.time < nextJumpAt || !hider.Grounded || !ThreatVisible) return;
+        if (!hider.Grounded) return;
+        bool chased = ThreatVisible || Time.time - LastSeenAt < 2f;
+        if (!chased) return;
+        bool aimed = HunterAimsAtMe(15f);
+        if (Time.time < nextJumpAt && !(aimed && Time.time >= nextJumpAt - 0.5f)) return;
         Vector3 pos = hider.transform.position;
         if (pos.y > 0.1f) return;
-        Vector3 pp = PursuitPoint(pos, pursuitLookahead, out _, out float remain);
-        if (remain < 2.5f) return;
-        // только на прямом участке: до поворота пути не меньше 2 м и курс уже вдоль пути. Иначе курс продолжал
-        // поворачивать в воздухе к следующему углу и дуга прыжка уходила через стеллаж (бот садился на его верх).
+        PursuitPoint(pos, 0.1f, out _, out float remain);
+        Vector3 pp = PursuitPoint(pos, pursuitLookahead, out _, out _);
+        if (remain < 1.0f) return;   // у самой цели/перехода на полку не прыгать
         float flight = FlightLength();
-        if (remain < flight + 0.5f) return;
-        if (FlatDist(corners[ci], pos) < flight && ci < corners.Length - 1) return;
+        // курс прыжка — направление пути (виляние в воздухе добавляется отдельно, вбок от него); по текущему курсу
+        // виляния бот улетал под углом к пути, и серия прыжков уводила его на метры в сторону
         Vector3 toP = Flat(pp - pos);
-        if (toP.sqrMagnitude > 1e-4f && Mathf.Abs(Mathf.DeltaAngle(input.yaw, Mathf.Atan2(toP.x, toP.z) * Mathf.Rad2Deg)) > 20f) return;
+        float jumpYaw = toP.sqrMagnitude > 1e-4f ? Mathf.Atan2(toP.x, toP.z) * Mathf.Rad2Deg : input.yaw;
+        Vector3 dir = Quaternion.Euler(0f, jumpYaw, 0f) * Vector3.forward;
+        // поворот пути: прыгать, только если до угла полёт почти долетает или поворот пологий (иначе улетим мимо прохода)
+        if (ci < corners.Length - 1 && FlatDist(corners[ci], pos) < flight * 0.6f)
+        {
+            Vector3 nextSeg = Flat(corners[ci + 1] - corners[ci]);
+            if (nextSeg.sqrMagnitude > 1e-4f && Vector3.Angle(dir, nextSeg) > 45f) return;
+        }
         JumpChecks++;
-        if (!JumpCorridorClear(input.yaw, flight)) return;
+        // приземление: свой навмеш на уровне пола (не на полку, не за пределы)
+        // (и с запасом ×1,4: высокий прыжок мелкого облика летит дальше расчёта — бот вылетал в проём входа)
+        foreach (float k in new[] { 1f, 1.4f })
+        {
+            Vector3 land = pos + dir * flight * k;
+            if (!NavMesh.SamplePosition(new Vector3(land.x, 0.05f, land.z), out var lh, 0.4f, Filter) || lh.position.y > 0.1f) { JumpBlockedBy = "приземление вне пола"; return; }
+        }
+        // коридор: тело + размах виляния в воздухе
+        float sway = Mathf.Clamp(weaveAmp * zigAmp, 0f, 0.4f);
+        if (!JumpCorridorClear(jumpYaw, flight, sway)) return;
+        airFrom = pos; airSway = sway; airBaseOffset = WeaveOffset;
         EvadeJumps++;
+        if (aimed) AimedJumps++;
         input.PressJump();
+        airLock = true; airYaw = jumpYaw; airLockAt = Time.time;
         // в отрыв — новая короткая полуволна в другую сторону: в воздухе заметно качает влево-вправо
         NextZig(true); zigAmp = 1f; ZigJumps++;
-        nextJumpAt = Time.time + 0.6f + (float)rng.NextDouble() * 0.8f;
+        nextJumpAt = Time.time + Mathf.Lerp(personality.jumpEveryMin, personality.jumpEveryMax, (float)rng.NextDouble());
+    }
+
+    bool airLock;
+    float airYaw, airSway, airBaseOffset, airLockAt;
+
+    // Под точкой в 0,8 м впереди по курсу есть пол своего навмеша.
+    bool FloorAhead(Vector3 pos, float yaw)
+    {
+        Vector3 a = pos + Quaternion.Euler(0f, yaw, 0f) * Vector3.forward * 0.8f;
+        return NavMesh.SamplePosition(new Vector3(a.x, 0.05f, a.z), out var h, 0.35f, Filter) && h.position.y < 0.1f;
+    }
+    Vector3 airFrom;
+
+    // Охотник целится прямо в бота: направление его взгляда (видно по модели) в пределах angle от направления на бота.
+    bool HunterAimsAtMe(float angle)
+    {
+        if (!ThreatVisible) return false;
+        foreach (var h in HunterPlayer.All)
+        {
+            Vector3 to = hider.BodyCenter - h.EyePosition;
+            if (Vector3.Angle(h.transform.forward, Flat(to)) < angle) return true;
+        }
+        return false;
     }
 
     // Длина полёта = скорость × время в воздухе (2·√(2H/g) ≈ 0,9 с): ~3,6 м шагом и ~5,4 м с Z.
@@ -1648,15 +1833,23 @@ public class HiderBot : MonoBehaviour
     // Объём коридора тела по всей дуге прыжка (вперёд на длину полёта, по высоте до верха прыжка) без статики. Лучи на паре высот
     // проходили между полками толщиной 4 см и бот прыгал вплотную к стеллажу. Боковой размах виляния сюда не входит:
     // точка следования и так держит тело в r + weaveMargin от стеллажей (PursuitTarget), и в воздухе тоже.
-    bool JumpCorridorClear(float yaw, float flight)
+    bool JumpCorridorClear(float yaw, float flight, float sway = 0f)
     {
         Vector3 pos = hider.transform.position;
         Quaternion yawQ = Quaternion.Euler(0f, yaw, 0f);
-        float half = hider.BodyRadius + 0.08f, top = hider.JumpHeight + hider.BodyHeight;
+        float half = hider.BodyRadius + 0.08f + sway, top = hider.JumpHeight + hider.BodyHeight;
         Vector3 center = pos + yawQ * new Vector3(0f, 0f, flight * 0.5f) + Vector3.up * (0.05f + top * 0.5f);
         int n = Physics.OverlapBoxNonAlloc(center, new Vector3(half, top * 0.5f, flight * 0.5f), overlapBuf, yawQ, RamKickAuthority.StaticMask, QueryTriggerInteraction.Ignore);
         for (int i = 0; i < n; i++)
             if (!overlapBuf[i].transform.IsChildOf(hider.transform)) { JumpBlockedBy = overlapBuf[i].name; return false; }
+        // крупные предметы и тела (верх выше 0,45 м) тоже: на автомат или стол бот садился сверху. Мелочь перепрыгивает.
+        n = Physics.OverlapBoxNonAlloc(center, new Vector3(half, top * 0.5f, flight * 0.5f), overlapBuf, yawQ, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < n; i++)
+        {
+            var c = overlapBuf[i];
+            if (c.transform.IsChildOf(hider.transform) || c.bounds.max.y - pos.y < 0.45f) continue;
+            if (c.GetComponentInParent<Prop>() != null || c.GetComponentInParent<HiderPlayer>() != null) { JumpBlockedBy = c.name; return false; }
+        }
         return true;
     }
 
