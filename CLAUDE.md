@@ -43,7 +43,8 @@ Unity-плагин: **MCP for Unity** (CoplayDev), https://github.com/CoplayDev/
 - Стиль, шейдер, звук, референсные изображения: `docs/art-and-audio.md` (+ картинки в `docs/references/` — открывать напрямую при работе над визуалом)
 - Тестовая комната для проверки стиля: `docs/style-test-room.md`
 - Единство карты, приём ассетов, порядок работы: `docs/art-pipeline.md`
-- Карта-супермаркет: `docs/map-supermarket.md`
+- Карта-ресторан (основная карта демо): `docs/map-restaurant.md`
+- Тестовая серая карта-супермаркет: `docs/map-supermarket.md`
 - Оптимизация: `docs/performance.md`
 - Объём демо: `docs/demo-scope.md`
 - Сроки и вехи: `docs/roadmap.md`
