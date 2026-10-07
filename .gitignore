@@ -5,3 +5,10 @@ Logs/
 .vs/
 *.csproj
 *.sln
+
+# Личные настройки редактора (раскладка окон и т.п.) — у каждого свои
+UserSettings/
+
+# Резервные копии сцен, которые Unity сохраняет после сбоя
+Assets/_Recovery/
+Assets/_Recovery.meta
