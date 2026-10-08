@@ -1925,7 +1925,8 @@ public class HiderBot : MonoBehaviour
                 }
                 faceStarted = true;
                 faceT += Time.deltaTime;
-                bool touching = Physics.Raycast(pos + Vector3.up * 0.05f, dir, hider.BodyRadius + 0.06f, RamKickAuthority.StaticMask, QueryTriggerInteraction.Ignore);
+                // упирается настоящая форма тела (прямоугольник не вписан в круг BodyRadius), поэтому длина луча — вынос формы вдоль нормали
+                bool touching = Physics.Raycast(pos + Vector3.up * 0.05f, dir, Mathf.Max(hider.BodyRadius, hider.ExtentAlong(dir)) + 0.06f, RamKickAuthority.StaticMask, QueryTriggerInteraction.Ignore);
                 // кромка в ~0,3 м от точки перехода: дальше 0,6 м или дольше 0,4 с не идём — прыгаем как есть (промах -> повтор)
                 bool tooFar = Vector3.Dot(Flat(pos - s), dir) > 0.6f;
                 if ((touching || faceT > 0.4f || tooFar) && hider.Grounded)

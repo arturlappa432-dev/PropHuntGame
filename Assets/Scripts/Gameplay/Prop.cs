@@ -19,6 +19,20 @@ public class Prop : MonoBehaviour
     public float height = 0.3f;       // высота в метрах (для капсулы игрока)
     public float footRadius = 0.15f;  // радиус основания
 
+    // Вписанный радиус основания: наименьшая полуось меша по X/Z. Круглая капсула CharacterController не может повторить
+    // прямоугольный предмет, поэтому берётся вписанная, а остальной контакт считает HiderPlayer.ResolveShapeContacts по настоящему коллайдеру.
+    public float InnerRadius
+    {
+        get
+        {
+            var mf = GetComponentInChildren<MeshFilter>();
+            if (mf == null || mf.sharedMesh == null) return footRadius;
+            var e = mf.sharedMesh.bounds.extents;
+            var s = mf.transform.localScale;
+            return Mathf.Min(e.x * Mathf.Abs(s.x), e.z * Mathf.Abs(s.z));
+        }
+    }
+
     public HiderPlayer occupant;
     public bool IsFree => occupant == null;
     public int MaxHp => TierHp[(int)tier];

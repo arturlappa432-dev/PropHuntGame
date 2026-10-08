@@ -47,7 +47,8 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public Vector3 HorizontalVelocity { get { var v = cc.velocity; v.y = 0f; return v; } }
     public bool Grounded => cc != null && cc.enabled && cc.isGrounded;
     public bool JumpWindingUp => windup >= 0f;   // присед перед отрывом: прыжок уже нажат, но ещё на земле
-    public float BodyRadius => cc != null ? cc.radius : 0.25f;
+    float bodyRadius;
+    public float BodyRadius => bodyRadius > 0f ? bodyRadius : cc != null ? cc.radius : 0.25f;
     public float PropYaw => propYaw;   // поворот предмета-тела (Q/E), мировой yaw: корень тела не вращается
     public enum StunPhase { None, Flight, Out, Realign }   // пинок: кувырок -> «в отключке» (звёзды) -> самовыравнивание
     public StunPhase Stun { get; private set; } = StunPhase.None;
@@ -85,7 +86,63 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public bool HideOwnBody => controlled && !thirdPerson && !Caught && CurrentProp != null;
     public void CollectOwnRenderers(List<Renderer> buffer) { CurrentProp.GetComponentsInChildren<Renderer>(false, buffer); }
 
-    void Awake() { cc = GetComponent<CharacterController>(); cc.skinWidth = 0.01f; }   // дефолт 0.08 даёт видимый зазор
+    void Awake() { cc = GetComponent<CharacterController>(); cc.skinWidth = 0.01f; cc.minMoveDistance = 0f; }   // дефолт 0.08 даёт видимый зазор; minMoveDistance 0: иначе микро-выталкивание Move игнорирует
+
+    // Насколько форма предмета-тела выступает от корня в горизонтальном направлении dir (опорная функция по вершинам меша).
+    // Для ботов: тело упирается в стену/кромку настоящей формой, а не окружностью BodyRadius.
+    public float ExtentAlong(Vector3 dir)
+    {
+        dir.y = 0f;
+        var mf = CurrentProp != null ? CurrentProp.GetComponentInChildren<MeshFilter>() : null;
+        if (mf == null || mf.sharedMesh == null || dir.sqrMagnitude < 1e-6f) return BodyRadius;
+        dir.Normalize();
+        float best = 0f;
+        var t = mf.transform;
+        foreach (var v in mf.sharedMesh.vertices) best = Mathf.Max(best, Vector3.Dot(t.TransformPoint(v) - transform.position, dir));
+        return best;
+    }
+
+    // Контакт предмета-тела с соседями по НАСТОЯЩЕЙ форме коллайдера (CC — круглая капсула и прямоугольник не повторяет).
+    // Предмет упирается во всё, что не отключено матрицей слоёв: статику, свободные предметы, чужие тела. Горизонтальные выталкивания
+    // считает ComputePenetration; потолок давит вниз; пол и опору держит CC. Зазор после выталкивания 1 мм.
+    const float ContactGap = 0.001f;
+    static readonly Collider[] contactBuf = new Collider[32];
+
+    void ResolveShapeContacts()
+    {
+        var prop = CurrentProp;
+        if (prop == null || !cc.enabled || Stun != StunPhase.None) return;
+        int layer = prop.gameObject.layer;
+        for (int iter = 0; iter < 4; iter++)
+        {
+            Physics.SyncTransforms();
+            float best = 0f; Vector3 bestPush = Vector3.zero;
+            foreach (var mine in prop.Colliders)
+            {
+                if (mine == null || !mine.enabled) continue;
+                var b = mine.bounds;
+                int n = Physics.OverlapBoxNonAlloc(b.center, b.extents + Vector3.one * 0.01f, contactBuf, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
+                for (int i = 0; i < n; i++)
+                {
+                    var o = contactBuf[i];
+                    if (o == null || o is CharacterController || o.transform.IsChildOf(transform)) continue;
+                    if (o is MeshCollider mc && !mc.convex) continue;
+                    if (Physics.GetIgnoreLayerCollision(layer, o.gameObject.layer) || Physics.GetIgnoreCollision(mine, o)) continue;
+                    if (!Physics.ComputePenetration(mine, mine.transform.position, mine.transform.rotation, o, o.transform.position, o.transform.rotation, out var dir, out float dist)) continue;
+                    var h = new Vector3(dir.x, 0f, dir.z);
+                    float hm = h.magnitude;
+                    Vector3 push;
+                    if (dir.y < -0.7f) push = Vector3.down * dist;                              // потолок/полка над головой
+                    else if (hm < 0.3f) continue;                                                // пол и опора: работа CC
+                    else push = h / hm * Mathf.Min(dist / hm, 0.25f);                            // боковой контакт
+                    if (push.magnitude > best) { best = push.magnitude; bestPush = push; }
+                }
+            }
+            if (best <= 0f) return;
+            if (bestPush.y < 0f && vy > 0f) vy = 0f;
+            cc.Move(bestPush + bestPush.normalized * ContactGap);
+        }
+    }
 
     void Start()
     {
@@ -103,6 +160,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     {
         float h = StickmanHeight, r = Mathf.Clamp(h * 0.17f, cc.skinWidth * 2f, h * 0.5f);
         cc.enabled = false;
+        bodyRadius = r;
         cc.radius = r; cc.height = h; cc.center = new Vector3(0, h * 0.5f + cc.skinWidth, 0);   // CC опирается низом капсулы на опору + skinWidth: поднимаем капсулу на skinWidth, чтобы корень (низ меша) стоял вплотную
         cc.stepOffset = Mathf.Min(0.3f, h * 0.5f);
         cc.enabled = true;
@@ -139,6 +197,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             else if (kb != null && kb.eKey.wasPressedThisFrame && CurrentProp == null) PressPossess();
             if (kb != null && !kb.eKey.isPressed) eConsumed = false;
             RotateProp(kb);
+            ResolveShapeContacts();
         }
         UpdateSquash();
     }
@@ -439,7 +498,12 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     {
         cc.enabled = false;
         // Радиус не больше половины высоты и не меньше 2·skinWidth: капсула не выше видимой модели (без фиксированного минимума 0,1).
-        float radius = Mathf.Clamp(Mathf.Min(prop.footRadius, prop.height * 0.5f), cc.skinWidth * 2f, 0.5f);
+        // BodyRadius (для ботов) остаётся прежним, описанным; сама капсула CC — вписанная (иначе у тонкого предмета зазор до соседей),
+        // остальное добирает ResolveShapeContacts по настоящему коллайдеру.
+        bodyRadius = Mathf.Clamp(Mathf.Min(prop.footRadius, prop.height * 0.5f), cc.skinWidth * 2f, 0.5f);
+        // CC останавливается за skinWidth до поверхности (радиус + skin), поэтому радиус на skin меньше вписанного: тогда CC упирается ровно
+        // когда форма касается соседа, а без этого у круглых предметов оставался зазор в skinWidth (10 мм) до соседа.
+        float radius = Mathf.Clamp(Mathf.Min(prop.InnerRadius, prop.height * 0.5f) - cc.skinWidth, cc.skinWidth * 1.5f, 0.5f);
         cc.radius = radius;
         cc.height = Mathf.Max(prop.height, radius * 2f);
         cc.center = new Vector3(0, cc.height * 0.5f + cc.skinWidth, 0);   // компенсация skinWidth, см. ApplyStickmanShape
