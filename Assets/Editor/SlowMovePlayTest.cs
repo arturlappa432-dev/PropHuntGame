@@ -105,6 +105,15 @@ public static class SlowMovePlayTest
         float dyaw = Mathf.DeltaAngle(yaw0, h.PropYaw);
         L($"Q+Alt 0,5 с: поворот {dyaw:F1}° (ожидаем ~-{h.propTurnSpeed * 0.5f:F0}°)");
 
+        // Прыжок без Alt (для сравнения)
+        for (float w = Time.time; Time.time - w < 1.5f;) { Keys(); yield return null; }
+        {
+            float yb = h.transform.position.y, mb = yb, tb = Time.time;
+            Keys(Key.Space); yield return null;
+            while (Time.time - tb < 1.5f) { Keys(); mb = Mathf.Max(mb, h.transform.position.y); yield return null; }
+            L($"Space без Alt: высота прыжка {mb - yb:F2} м");
+        }
+        for (float w = Time.time; Time.time - w < 1.0f;) { Keys(); yield return null; }
         // Прыжок при Alt
         yield return null;
         float y0 = h.transform.position.y, maxY = y0;
@@ -113,7 +122,7 @@ public static class SlowMovePlayTest
         yield return null;
         while (Time.time - tj < 1.5f) { Keys(Key.LeftAlt); maxY = Mathf.Max(maxY, h.transform.position.y); yield return null; }
         Keys();
-        L($"Space+Alt: высота прыжка {maxY - y0:F2} м (формула {h.JumpHeight:F2})");
+        L($"Space+Alt: высота прыжка {maxY - y0:F2} м (обычная {h.JumpHeight:F2}, ожидаем {h.JumpHeight * h.slowJumpMult:F2})");
 
         // Точность: шаг на 0.5 с с нажатия-отпускания (проскальзывание после отпускания: у CC нет инерции)
         h.transform.position = start;

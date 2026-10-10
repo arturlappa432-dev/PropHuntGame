@@ -31,6 +31,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public float boostRecharge = 15f;     // сек восстановления шкалы после конца ускорения
 
     public float slowMoveMult = 0.33f;    // Left Alt: множитель скорости для точной подстройки, стартовое значение, калибровать на плейтесте
+    public float slowJumpMult = 0.5f;     // Left Alt: высота прыжка × 0,5 (по запросу владельца), калибровать
     public bool SlowMoving => slowMoving; // «прыг-скок» отдельного состояния не требует: амплитуда/частота идут от текущей скорости
     bool slowMoving;
 
@@ -254,7 +255,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             windup -= Time.deltaTime;
             if (windup < 0f)
             {
-                if (grounded) vy = Mathf.Sqrt(2f * -gravity * JumpHeight);   // отрыв без звука
+                if (grounded) vy = Mathf.Sqrt(2f * -gravity * JumpHeight * (slowMoving ? slowJumpMult : 1f));   // отрыв без звука; с Alt прыжок ниже
                 windup = -1f;
                 grounded = false;
             }
