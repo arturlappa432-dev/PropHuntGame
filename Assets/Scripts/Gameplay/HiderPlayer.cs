@@ -63,7 +63,9 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     float EyeHeight => CurrentProp == null ? StickmanHeight * 0.9f : Mathf.Max(0.25f, CurrentProp.height * 0.9f);
     public float StickmanHeight => hunterHeight / stickmanRatio;
     public float BodyHeight => CurrentProp == null ? StickmanHeight : CurrentProp.height;
-    public float JumpHeight => Mathf.Max(BodyHeight * jumpHeightMultiplier, minHidingJumpHeight);
+    public float JumpHeight => JumpHeightFor(BodyHeight, jumpHeightMultiplier, minHidingJumpHeight);
+    // Единая формула для всех ролей (movement-and-camera.md): max(множитель × рост, минимум для полок). Её же берёт HunterPlayer.
+    public static float JumpHeightFor(float bodyHeight, float multiplier, float minHeight) => Mathf.Max(bodyHeight * multiplier, minHeight);
 
     static int OwnBodyLayer => LayerMask.NameToLayer("OwnBody");
 
@@ -406,7 +408,7 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     }
 
     // Процедурный глухой «тум» приземления, без внешних ассетов.
-    static AudioClip MakeLandClip()
+    internal static AudioClip MakeLandClip()
     {
         const int rate = 22050;
         int n = (int)(rate * 0.18f);

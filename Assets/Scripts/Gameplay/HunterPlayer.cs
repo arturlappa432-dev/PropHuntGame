@@ -12,6 +12,11 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
     public bool controlled;
     public float walkSpeed = 4f;          // скорость охотника в документах не задана, временно как у прячущегося
     public float gravity = -20f;
+    // Прыжок: та же формула и те же числа, что у прячущегося (HiderPlayer.JumpHeightFor, movement-and-camera.md).
+    public float jumpHeightMultiplier = 1.75f;
+    public float minJumpHeight = 2.05f;
+    public float jumpWindup = 0.1f;
+    public float JumpHeight => HiderPlayer.JumpHeightFor(height, jumpHeightMultiplier, minJumpHeight);
     public float mouseSensitivity = 0.1f;
     public float height = 1.8f;
     public float stumbleDuration = 0.7f;
@@ -28,6 +33,9 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
     [SerializeField] Transform pivot, gun;
     [SerializeField] GameObject viewModel;
     float yaw, pitch, vy, stumbleT = -1f, lastFire = -10f, kickT = -1f;
+    float windup = -1f, squash = 1f, camKick, camKickVel;
+    bool wasAirborne;
+    AudioClip landClip;
     HunterRagdoll ragdoll;
     Material bodyMaterial;
     const float KickAnimTime = 0.3f;
@@ -97,6 +105,7 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
     {
         sfx = gameObject.AddComponent<AudioSource>();
         sfx.spatialBlend = 0f;
+        landClip = HiderPlayer.MakeLandClip();
         tracerMat = new Material(Shader.Find("Sprites/Default"));
         yaw = transform.eulerAngles.y;
         if (GunHomeScale == Vector3.zero && gun != null) GunHomeScale = gun.localScale;   // охотник из сцены, не из Create
@@ -142,6 +151,7 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
         if (mouse != null && mouse.leftButton.wasPressedThisFrame) Fire();
         if (mouse != null && mouse.rightButton.wasPressedThisFrame) Kick();
         UpdateStumble();
+        UpdateSquash();
     }
 
     // Коллайдер предмета на теле прячущегося (слой OwnBody; бокс/меш с собственной ориентацией) не должен выталкивать охотника:
@@ -169,9 +179,51 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
             if (kb.aKey.isPressed) input.x -= 1;
         }
         Vector3 move = transform.rotation * input.normalized * walkSpeed;
-        if (cc.isGrounded) vy = -1f; else vy += gravity * Time.deltaTime;
+        bool grounded = cc.isGrounded;
+        if (grounded && wasAirborne) Land(-vy);
+        bool jumpPressed = kb != null && !IsBlocked && kb.spaceKey.wasPressedThisFrame;
+        if (grounded && windup < 0f && jumpPressed) windup = jumpWindup;
+        if (windup >= 0f)
+        {
+            windup -= Time.deltaTime;
+            if (windup < 0f)
+            {
+                if (grounded) vy = Mathf.Sqrt(2f * -gravity * JumpHeight);   // отрыв без звука
+                windup = -1f;
+                grounded = false;
+            }
+        }
+        if (grounded) vy = -1f; else vy += gravity * Time.deltaTime;
         move.y = vy;
-        cc.Move(move * Time.deltaTime);
+        var flags = cc.Move(move * Time.deltaTime);
+        if ((flags & CollisionFlags.Above) != 0 && vy > 0f) vy = 0f;   // голова в потолок/полку: подъём гасится
+        wasAirborne = !cc.isGrounded;
+    }
+
+    // Приземление: звук (громче от скорости падения) и толчок камеры; приседание модели и камеры идёт через squash.
+    void Land(float fallSpeed)
+    {
+        float k = Mathf.Clamp01(fallSpeed / 8f);
+        if (k < 0.05f) return;
+        if (sfx != null && landClip != null) sfx.PlayOneShot(landClip, 0.25f + 0.75f * k);
+        squash = 1f - 0.18f * k;
+        camKickVel = -2.2f * k;
+    }
+
+    // Приседание перед отрывом и растяжение в воздухе. Свою модель владелец не видит (OwnBodyCulling), её видят остальные;
+    // у владельца то же самое выражается опусканием камеры в LateUpdate.
+    void UpdateSquash()
+    {
+        float target = 1f;
+        if (windup >= 0f) target = 0.8f;
+        else if (!cc.isGrounded)
+        {
+            float v0 = Mathf.Sqrt(2f * -gravity * Mathf.Max(0.05f, JumpHeight));
+            target = 1f + 0.15f * Mathf.Clamp01(Mathf.Abs(vy) / v0);
+        }
+        squash = Mathf.Lerp(squash, target, 1f - Mathf.Exp(-(windup >= 0f ? 30f : 18f) * Time.deltaTime));
+        float sxz = 1f / Mathf.Sqrt(squash);   // сохраняем объём
+        pivot.localScale = new Vector3(sxz, squash, sxz);
     }
 
     // Выстрел: решает CombatAuthority. Звук/вспышка/след — у всех; на промахе «телл» (звук + спотыкание).
@@ -218,6 +270,8 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
     {
         if (Knocked) return;
         stumbleT = -1f; kickT = -1f;
+        windup = -1f; squash = 1f; camKick = camKickVel = 0f;
+        pivot.localScale = Vector3.one;
         UpdateStumble();
         Pose camPose = cam != null && controlled ? new Pose(cam.transform.position, cam.transform.rotation)
             : new Pose(EyePosition, Quaternion.Euler(pitch, yaw, 0));
@@ -233,7 +287,7 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
     {
         ragdoll = null;
         transform.position = foot;
-        yaw = yawDeg; pitch = 0f; vy = 0f;
+        yaw = yawDeg; pitch = 0f; vy = 0f; wasAirborne = false;
         transform.rotation = Quaternion.Euler(0, yaw, 0);
         pivot.gameObject.SetActive(true);
         cc.enabled = true;
@@ -326,7 +380,11 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
         float dip = StumbleK * -10f;   // камера кивает вниз при спотыкании
         float recoil = Mathf.Clamp01(1f - (Time.time - lastFire) / 0.15f) * -4f;
         Quaternion rot = Quaternion.Euler(pitch + dip + recoil, yaw, StumbleK * Mathf.Sin(stumbleT * 22f) * 3f);
-        Vector3 fpPos = EyePosition + Vector3.up * -0.12f * StumbleK;
+        // Толчок камеры при приземлении (пружина, как у прячущегося) и приседание перед отрывом/после посадки.
+        camKickVel += (-camKick * 180f - camKickVel * 18f) * Time.deltaTime;
+        camKick += camKickVel * Time.deltaTime;
+        float crouchDip = Mathf.Min(0f, squash - 1f) * height * 0.25f;
+        Vector3 fpPos = EyePosition + Vector3.up * (-0.12f * StumbleK + camKick * 0.5f + crouchDip);
         if (tpBlend > 0f && tpValid)
         {
             float k = Mathf.SmoothStep(0f, 1f, tpBlend);
