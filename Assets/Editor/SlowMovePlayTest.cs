@@ -92,7 +92,7 @@ public static class SlowMovePlayTest
         h.PressBoost();
         L($"Boost после PressBoost: {h.Boost}");
         for (var e = Measure(h, 0.8f, (m, c) => { v = m; n = c; }, Key.W, Key.LeftAlt); e.MoveNext();) yield return null;
-        L($"Boost+W+LeftAlt: {v:F2} м/с, SlowMoving={h.SlowMoving}, ожидаем {h.walkSpeed * h.boostSpeedMult:F2} (Alt игнорируется)");
+        L($"Boost+W+LeftAlt: {v:F2} м/с, SlowMoving={h.SlowMoving}, ожидаем {h.walkSpeed * h.boostSpeedMult * h.slowMoveMult:F2} (множители перемножаются)");
 
         // Дождаться конца ускорения
         for (float w = Time.time; Time.time - w < 3.5f;) { Keys(); yield return null; }

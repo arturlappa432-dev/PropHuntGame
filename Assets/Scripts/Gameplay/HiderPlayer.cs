@@ -240,9 +240,9 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             if (kb.aKey.isPressed) input.x -= 1;
         }
         if (botInput != null) { input.x = botInput.move.x; input.z = botInput.move.y; }
-        // Left Alt: точная подстройка позиции, только в облике предмета; ускорение Z приоритетнее. Поворот Q/E и прыжок не затрагиваются.
-        slowMoving = kb != null && kb.leftAltKey.isPressed && CurrentProp != null && !Sliding;
-        float speedMult = Sliding ? boostSpeedMult : slowMoving ? slowMoveMult : 1f;
+        // Left Alt: точная подстройка позиции, только в облике предмета; множитель перемножается с ускорением Z. Поворот Q/E и прыжок не затрагиваются.
+        slowMoving = kb != null && kb.leftAltKey.isPressed && CurrentProp != null;
+        float speedMult = (Sliding ? boostSpeedMult : 1f) * (slowMoving ? slowMoveMult : 1f);
         Vector3 move = look * input.normalized * walkSpeed * speedMult;
         slideMoving = Sliding && input.sqrMagnitude > 0.01f;
         bool grounded = cc.isGrounded;
