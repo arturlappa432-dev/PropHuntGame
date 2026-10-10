@@ -42,6 +42,52 @@ public static class HunterJumpPlayTest
         InputSystem.QueueStateEvent(kb, down ? new KeyboardState(k) : new KeyboardState());   // обработает цикл игрока, не редактор
     }
 
+    // Таран в воздухе: Space, на подъёме выше 0,5 м вызывается Knock (как из RamKickAuthority.TryRam), затем наблюдение до подъёма.
+    public static void StartKnockMidair()
+    {
+        log.Clear();
+        run = KnockMain();
+        EditorApplication.update += Tick;
+    }
+
+    static IEnumerator KnockMain()
+    {
+        InputSystem.settings.backgroundBehavior = InputSettings.BackgroundBehavior.IgnoreFocus;
+        var h = Object.FindFirstObjectByType<HunterPlayer>();
+        if (RoundState.Instance.Phase == RoundPhase.Prep) RoundState.Instance.EndPrep();
+        h.SetControlled(true);
+        foreach (var hp in HiderPlayer.All) hp.SetControlled(false);
+        for (float w0 = Time.time; Time.time - w0 < 0.5f;) yield return null;
+        var cc = h.GetComponent<CharacterController>();
+        var pivot = (Transform)typeof(HunterPlayer).GetField("pivot", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(h);
+        float baseY = h.transform.position.y;
+        Vector3 startPos = h.transform.position;
+        Key(UnityEngine.InputSystem.Key.Space, true);
+        float tStart = Time.time;
+        while (h.transform.position.y < baseY + 0.7f && Time.time - tStart < 3f)
+        {
+            Key(UnityEngine.InputSystem.Key.Space, true);
+            yield return null;
+        }
+        Key(UnityEngine.InputSystem.Key.Space, false);
+        L($"Таран в воздухе на высоте {h.transform.position.y - baseY:F2} м, vy={Get<float>(h, "vy"):F2}");
+        h.Knock(h.transform.forward * 7f + Vector3.up * 3f, Random.onUnitSphere * 6f, RamKickAuthority.Instance);
+        L($"Knocked={h.Knocked}, cc.enabled={cc.enabled}, pivotActive={pivot.gameObject.activeSelf}");
+        float t0 = Time.time; float maxFall = 0f, minY = 99f;
+        while (h.Knocked && Time.time - t0 < 12f) { yield return null; }
+        L($"Ragdoll закончился через {Time.time - t0:F2} с (жёсткий таймер 3 с + подъём 0,8 с), Knocked={h.Knocked}");
+        for (float w0 = Time.time; Time.time - w0 < 1f;) yield return null;
+        var p = h.transform.position;
+        L($"После подъёма: pos={p}, смещение от старта {(new Vector2(p.x - startPos.x, p.z - startPos.z)).magnitude:F2} м, y={p.y:F3}, cc.enabled={cc.enabled}, pivotActive={pivot.gameObject.activeSelf}, scale={pivot.localScale}, vy={Get<float>(h, "vy"):F2}, камера-глаза-над-ногами={h.cam.transform.position.y - p.y:F2}");
+        // Прыжок снова работает?
+        float y1 = h.transform.position.y; float mx = y1;
+        Key(UnityEngine.InputSystem.Key.Space, true);
+        for (float w0 = Time.time; Time.time - w0 < 2f;) { Key(UnityEngine.InputSystem.Key.Space, Time.time - w0 < 0.1f); mx = Mathf.Max(mx, h.transform.position.y); yield return null; }
+        Key(UnityEngine.InputSystem.Key.Space, false);
+        L($"Прыжок после подъёма: апекс {mx - y1:F3} м");
+        L("Готово");
+    }
+
     static T Get<T>(object o, string f) => (T)o.GetType().GetField(f, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(o);
 
     static IEnumerator Main()
