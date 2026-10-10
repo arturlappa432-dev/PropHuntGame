@@ -30,6 +30,10 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
     public float boostDuration = 3f;      // сек ускорения = полная шкала
     public float boostRecharge = 15f;     // сек восстановления шкалы после конца ускорения
 
+    public float slowMoveMult = 0.33f;    // Left Alt: множитель скорости для точной подстройки, стартовое значение, калибровать на плейтесте
+    public bool SlowMoving => slowMoving; // «прыг-скок» отдельного состояния не требует: амплитуда/частота идут от текущей скорости
+    bool slowMoving;
+
     public enum BoostPhase { Ready, Active, Recharging }
     public BoostPhase Boost { get; private set; } = BoostPhase.Ready;
     public float BoostFill { get; private set; } = 1f;   // 1 = полная шкала
@@ -236,7 +240,10 @@ public class HiderPlayer : MonoBehaviour, IOwnBodyViewer
             if (kb.aKey.isPressed) input.x -= 1;
         }
         if (botInput != null) { input.x = botInput.move.x; input.z = botInput.move.y; }
-        Vector3 move = look * input.normalized * walkSpeed * (Sliding ? boostSpeedMult : 1f);
+        // Left Alt: точная подстройка позиции, только в облике предмета; ускорение Z приоритетнее. Поворот Q/E и прыжок не затрагиваются.
+        slowMoving = kb != null && kb.leftAltKey.isPressed && CurrentProp != null && !Sliding;
+        float speedMult = Sliding ? boostSpeedMult : slowMoving ? slowMoveMult : 1f;
+        Vector3 move = look * input.normalized * walkSpeed * speedMult;
         slideMoving = Sliding && input.sqrMagnitude > 0.01f;
         bool grounded = cc.isGrounded;
         if (grounded && wasAirborne) Land(-vy);
