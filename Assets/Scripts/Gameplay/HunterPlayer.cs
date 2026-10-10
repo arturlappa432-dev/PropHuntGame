@@ -12,11 +12,12 @@ public class HunterPlayer : MonoBehaviour, IOwnBodyViewer
     public bool controlled;
     public float walkSpeed = 4f;          // скорость охотника в документах не задана, временно как у прячущегося
     public float gravity = -20f;
-    // Прыжок: та же формула и те же числа, что у прячущегося (HiderPlayer.JumpHeightFor, movement-and-camera.md).
-    public float jumpHeightMultiplier = 1.75f;
-    public float minJumpHeight = 2.05f;
+    // Прыжок: та же формула, что у прячущегося (HiderPlayer.JumpHeightFor, movement-and-camera.md), но числа вдвое меньше
+    // (решение владельца 2026-10-10: 1,75 × 1,8 = 3,15 м было слишком высоко): 0,875 × 1,8 = 1,575 м.
+    public float hunterJumpMultiplier = 0.875f;
+    public float hunterMinJumpHeight = 1.025f;
     public float jumpWindup = 0.1f;
-    public float JumpHeight => HiderPlayer.JumpHeightFor(height, jumpHeightMultiplier, minJumpHeight);
+    public float JumpHeight => HiderPlayer.JumpHeightFor(height, hunterJumpMultiplier, hunterMinJumpHeight);
     public float mouseSensitivity = 0.1f;
     public float height = 1.8f;
     public float stumbleDuration = 0.7f;
